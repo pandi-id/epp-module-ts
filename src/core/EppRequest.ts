@@ -60,6 +60,19 @@ export class EppRequest {
     return this.xmlBuilder.buildEppRequest(command);
   }
 
+  hello(): string {
+    const helloObject = {
+      'epp': {
+        '$': {
+          'xmlns': 'urn:ietf:params:xml:ns:epp-1.0'
+        },
+        'hello': {}
+      }
+    };
+
+    return this.xmlBuilder['builder'].buildObject(helloObject);
+  }
+
   contactCheck(ids: string[]): string {
     const clTRID = this.xmlBuilder.generateClTRID();
     
