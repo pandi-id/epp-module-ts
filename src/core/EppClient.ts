@@ -449,6 +449,71 @@ export class EppClient {
     return this.sendCommand(xml);
   }
 
+  /**
+   * Poll Command - Message Queue Management
+   * Referensi: RFC 5730 Section 2.9.2.3 - EPP <poll> Command
+   * 
+   * Poll command digunakan untuk retrieve dan acknowledge messages
+   * dari server message queue. Queue berisi notifications tentang
+   * events seperti domain transfers, expirations, dan updates.
+   * 
+   * Operations:
+   * - 'req': Request first message dari queue
+   * - 'ack': Acknowledge receipt of message (removes from queue)
+   * 
+   * Success result codes:
+   * - 1000: Command completed successfully
+   * - 1300: Command completed successfully; no messages
+   * - 1301: Command completed successfully; ack to dequeue
+   * 
+   * Message queue behavior:
+   * - Messages di-queue dalam FIFO order
+   * - 'req' operation retrieves but doesn't remove message
+   * - 'ack' operation removes message dari queue
+   * - Server may limit queue size and message retention
+   * 
+   * @param op - 'req' untuk request message, 'ack' untuk acknowledge
+   * @param msgID - Message ID (required untuk ack operation)
+   * @returns EPP response dengan message data (jika ada)
+   * 
+   * @example
+   * ```typescript
+   * // Request first message dari queue
+   * const result = await client.poll('req');
+   * if (result.data?.msgQ) {
+   *   console.log('Message:', result.data.msgQ.msg);
+   *   console.log('Remaining:', result.data.msgQ.count);
+   *   
+   *   // Acknowledge message
+   *   await client.poll('ack', result.data.msgQ.id);
+   * }
+   * ```
+   * 
+   * @example
+   * ```typescript
+   * // Process all messages in queue
+   * let hasMessages = true;
+   * while (hasMessages) {
+   *   const result = await client.poll('req');
+   *   
+   *   if (result.code === 1300) {
+   *     // No messages
+   *     hasMessages = false;
+   *   } else if (result.data?.msgQ) {
+   *     // Process message
+   *     console.log(result.data.msgQ.msg);
+   *     
+   *     // Acknowledge
+   *     await client.poll('ack', result.data.msgQ.id);
+   *   }
+   * }
+   * ```
+   */
+  async poll(op: 'req' | 'ack', msgID?: string): Promise<EppResponse> {
+    const xml = this.eppRequest.poll(op, msgID);
+    return this.sendCommand(xml);
+  }
+
   // ========================================================================
   // CONTACT COMMANDS (RFC 5733)
   // ========================================================================

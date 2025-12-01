@@ -13,7 +13,10 @@ export type {
   SessionOptions,
   FeeCheckRequest,
   Period,
-  AuthInfo
+  AuthInfo,
+  PollRequest,
+  PollMessage,
+  PollResponse
 } from './Common';
 
 // Domain Types (RFC 5731)

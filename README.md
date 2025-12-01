@@ -118,6 +118,7 @@ try {
 
 ### Core Protocol (RFC 5730)
 - ✅ **Session Management**: Connect/disconnect, login/logout
+- ✅ **Poll Queue**: Message queue management untuk notifications
 - ✅ **Result Codes**: Comprehensive error handling dengan RFC-compliant codes
 - ✅ **Transaction IDs**: Client dan server transaction tracking
 - ✅ **Server Greeting**: Automatic greeting message processing
@@ -393,7 +394,7 @@ await client.contactCreate({
 
 ## 🧪 Testing
 
-Proyek ini memiliki **comprehensive test suite** dengan **113 tests** yang mencakup semua aspek protokol EPP.
+Proyek ini memiliki **comprehensive test suite** dengan **116 tests** yang mencakup semua aspek protokol EPP.
 
 ### Test Coverage
 
@@ -401,9 +402,9 @@ Proyek ini memiliki **comprehensive test suite** dengan **113 tests** yang menca
 |-------|-------|----------|
 | EppClient | 5 | Connection & communication |
 | XmlBuilder | 21 | XML generation & validation |
-| EppRequest | 56 | All EPP commands (RFC 5730-5733) |
+| EppRequest | 59 | All EPP commands (RFC 5730-5733) |
 | Dnssec | 31 | DNSSEC validation (RFC 5910) |
-| **Total** | **113** | **100% RFC Compliance** |
+| **Total** | **116** | **100% RFC Compliance** |
 
 ### Running Tests
 
@@ -439,6 +440,7 @@ Time:        ~2 seconds
 **Session Management (RFC 5730)**
 - ✅ Login/Logout commands
 - ✅ Hello command (greeting)
+- ✅ Poll command (message queue)
 - ✅ Transaction ID generation
 - ✅ Session state management
 
@@ -586,6 +588,41 @@ await client.domainUpdate({
     urgent: true
   }
 });
+```
+
+### Poll Queue Management
+
+```typescript
+// Request first message from queue
+const result = await client.poll('req');
+
+if (result.code === 1300) {
+  console.log('No messages in queue');
+} else if (result.data?.msgQ) {
+  const msg = result.data.msgQ;
+  console.log('Message:', msg.msg);
+  console.log('Remaining:', msg.count);
+  
+  // Acknowledge message (removes from queue)
+  await client.poll('ack', msg.id);
+}
+
+// Process all messages
+let hasMessages = true;
+while (hasMessages) {
+  const result = await client.poll('req');
+  
+  if (result.code === 1300) {
+    hasMessages = false;
+  } else if (result.data?.msgQ) {
+    // Process message
+    console.log('Type:', result.data.msgQ.type);
+    console.log('Content:', result.data.msgQ.msg);
+    
+    // Acknowledge
+    await client.poll('ack', result.data.msgQ.id);
+  }
+}
 ```
 
 ## 🔧 RFC Compliance

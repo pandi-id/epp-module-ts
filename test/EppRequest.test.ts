@@ -79,6 +79,31 @@ describe('EppRequest - RFC Compliance Tests', () => {
         expect(xml).toContain('<hello/>');
       });
     });
+
+    describe('Poll Command (RFC 5730 Section 2.9.2.3)', () => {
+      it('should generate poll request XML', () => {
+        const xml = eppRequest.poll('req');
+        
+        expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+        expect(xml).toContain('<poll op="req"/>');
+        expect(xml).toContain('<clTRID>');
+      });
+
+      it('should generate poll ack XML with msgID', () => {
+        const xml = eppRequest.poll('ack', '12345');
+        
+        expect(xml).toContain('<poll op="ack" msgID="12345"/>');
+        expect(xml).toContain('<clTRID>');
+      });
+
+      it('should include command structure', () => {
+        const xml = eppRequest.poll('req');
+        
+        expect(xml).toContain('<command>');
+        expect(xml).toContain('<poll');
+        expect(xml).toContain('</command>');
+      });
+    });
   });
 
   /**

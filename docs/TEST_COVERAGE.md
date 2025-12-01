@@ -2,7 +2,7 @@
 
 ## Overview
 
-Proyek EPP TypeScript Client ini memiliki **113 unit tests** yang mencakup seluruh aspek protokol EPP sesuai dengan RFC specifications. Test coverage mencapai **100%** untuk semua command EPP yang diimplementasikan.
+Proyek EPP TypeScript Client ini memiliki **116 unit tests** yang mencakup seluruh aspek protokol EPP sesuai dengan RFC specifications. Test coverage mencapai **100%** untuk semua command EPP yang diimplementasikan.
 
 ## Test Suites
 
@@ -52,12 +52,12 @@ Test suite untuk XML generation dan structure validation.
 - ✅ Domain create with all options
 - ✅ Contact create with postal info
 
-### 3. EppRequest.test.ts (56 tests)
+### 3. EppRequest.test.ts (59 tests)
 Test suite untuk semua EPP commands sesuai RFC specifications.
 
 **Coverage:**
 
-#### Session Management - RFC 5730 (7 tests)
+#### Session Management - RFC 5730 (10 tests)
 
 **Login Command (RFC 5730 Section 2.9.1.1):**
 - ✅ Valid login XML generation
@@ -71,6 +71,11 @@ Test suite untuk semua EPP commands sesuai RFC specifications.
 
 **Hello Command (RFC 5730 Section 2.3):**
 - ✅ Valid hello XML generation (greeting request)
+
+**Poll Command (RFC 5730 Section 2.9.2.3):**
+- ✅ Poll request XML generation (op='req')
+- ✅ Poll acknowledge XML with msgID (op='ack')
+- ✅ Command structure validation
 
 #### Domain Commands - RFC 5731 (23 tests)
 
@@ -219,9 +224,9 @@ Test suite untuk DNSSEC validation sesuai RFC 5910.
 |-------|-------|--------|
 | EppClient | 5 | ✅ PASS |
 | XmlBuilder | 21 | ✅ PASS |
-| EppRequest | 56 | ✅ PASS |
+| EppRequest | 59 | ✅ PASS |
 | Dnssec | 31 | ✅ PASS |
-| **Total** | **113** | **✅ 100% PASS** |
+| **Total** | **116** | **✅ 100% PASS** |
 
 ## RFC Compliance Matrix
 
@@ -242,7 +247,7 @@ Test suite untuk DNSSEC validation sesuai RFC 5910.
 | Hello | ✅ | 2.3 |
 | Login | ✅ | 2.9.1.1 |
 | Logout | ✅ | 2.9.1.2 |
-| Poll | ⚠️ Not implemented yet | 2.9.2.3 |
+| Poll | ✅ | 2.9.2.3 |
 
 ### Domain Commands (RFC 5731)
 | Command | Tested | RFC Section |
@@ -430,5 +435,5 @@ When adding new features:
 
 **Last Updated**: December 2024  
 **Test Suite Version**: 1.0.0  
-**Total Tests**: 113  
+**Total Tests**: 116  
 **Status**: ✅ All Passing

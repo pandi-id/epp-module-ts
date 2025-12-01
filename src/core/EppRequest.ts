@@ -73,6 +73,47 @@ export class EppRequest {
     return this.xmlBuilder['builder'].buildObject(helloObject);
   }
 
+  /**
+   * Poll Command (RFC 5730 Section 2.9.2.3)
+   * 
+   * Digunakan untuk retrieve dan acknowledge messages dari server queue.
+   * 
+   * @param op - 'req' untuk request message, 'ack' untuk acknowledge
+   * @param msgID - Message ID (required untuk ack operation)
+   * @returns XML string untuk EPP poll command
+   * 
+   * @example
+   * // Request first message dari queue
+   * const xml = eppRequest.poll('req');
+   * 
+   * @example
+   * // Acknowledge message
+   * const xml = eppRequest.poll('ack', '12345');
+   */
+  poll(op: 'req' | 'ack', msgID?: string): string {
+    const clTRID = this.xmlBuilder.generateClTRID();
+    
+    const pollCmd: any = {
+      '$': {
+        'op': op
+      }
+    };
+
+    // Add msgID for ack operation
+    if (op === 'ack' && msgID) {
+      pollCmd['$']['msgID'] = msgID;
+    }
+
+    const command = {
+      'command': {
+        'poll': pollCmd,
+        'clTRID': clTRID
+      }
+    };
+
+    return this.xmlBuilder.buildEppRequest(command);
+  }
+
   contactCheck(ids: string[]): string {
     const clTRID = this.xmlBuilder.generateClTRID();
     

@@ -295,3 +295,82 @@ export interface AuthInfo {
    */
   roid?: string;
 }
+
+/**
+ * Poll Request
+ * Referensi: RFC 5730 Section 2.9.2.3 - Poll Command
+ * 
+ * Poll command digunakan untuk retrieve dan acknowledge messages
+ * dari server message queue.
+ */
+export interface PollRequest {
+  /**
+   * Poll operation type (RFC 5730 Section 2.9.2.3)
+   * - 'req': Request first message from queue
+   * - 'ack': Acknowledge receipt of message
+   */
+  op: 'req' | 'ack';
+  
+  /**
+   * Message ID untuk acknowledge operation
+   * REQUIRED when op='ack'
+   * Format: server-specific message identifier
+   */
+  msgID?: string;
+}
+
+/**
+ * Poll Message
+ * Referensi: RFC 5730 Section 2.9.2.3 - Poll Command Response
+ * 
+ * Server message dari queue yang berisi notifications tentang
+ * events (transfers, domain expiry, etc.)
+ */
+export interface PollMessage {
+  /**
+   * Message identifier
+   * Used untuk acknowledge message dengan poll ack
+   */
+  id: string;
+  
+  /**
+   * Queue date - when message was enqueued
+   * ISO 8601 format: YYYY-MM-DDTHH:mm:ss.sssZ
+   */
+  qDate: string;
+  
+  /**
+   * Message type/category
+   * Examples: 'domain:trnData', 'domain:panData', etc.
+   */
+  type?: string;
+  
+  /**
+   * Message content
+   * Structure depends on message type
+   */
+  msg?: any;
+  
+  /**
+   * Number of messages remaining in queue
+   */
+  count?: number;
+}
+
+/**
+ * Poll Response
+ * Referensi: RFC 5730 Section 2.9.2.3
+ * 
+ * Response dari poll command berisi message data dan queue count.
+ */
+export interface PollResponse extends EppResponse {
+  /**
+   * Poll message data (if op='req' and messages exist)
+   */
+  msgQ?: PollMessage;
+  
+  /**
+   * Message count in queue
+   */
+  count?: number;
+}
