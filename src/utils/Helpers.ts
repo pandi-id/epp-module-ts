@@ -187,10 +187,10 @@ export function deepMerge<T extends Record<string, any>>(target: T, source: Part
       const sourceValue = source[key];
       const targetValue = result[key];
       
-      if (isObject(sourceValue) && isObject(targetValue)) {
-        result[key] = deepMerge(targetValue, sourceValue);
-      } else {
-        result[key] = deepClone(sourceValue);
+      if (sourceValue !== undefined && isObject(sourceValue) && isObject(targetValue)) {
+        result[key] = deepMerge(targetValue, sourceValue as any);
+      } else if (sourceValue !== undefined) {
+        result[key] = deepClone(sourceValue) as any;
       }
     }
   }

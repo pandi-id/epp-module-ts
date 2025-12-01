@@ -5,7 +5,7 @@
  * dengan referensi RFC di setiap step.
  */
 
-import { EppClient } from '../src/core/EppClient';
+import { EppClient } from '../src/index';
 import { 
   ContactCreateRequest, 
   DomainCreateRequest,
@@ -19,7 +19,8 @@ async function completeDomainRegistration() {
   // Initialize EPP Client
   // Referensi: RFC 5730 Section 2 - Transport Considerations
   const client = new EppClient({
-    server: 'https://epp.registry.example',
+    host: 'epp.registry.example',
+    port: 700, // Standard EPP port
     username: 'registrar-id',
     password: 'secure-password',
     lang: 'en',

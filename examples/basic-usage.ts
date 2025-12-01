@@ -1,9 +1,10 @@
 import { EppClient } from '../src';
 
 async function main() {
-  // Initialize client
+  // Initialize client with TLS/TCP configuration
   const client = new EppClient({
-    server: 'https://epp.testregistry.com',
+    host: 'epp.testregistry.com',
+    port: 700, // Standard EPP port
     username: 'test-registrar',
     password: 'test-password',
     debug: true
@@ -66,7 +67,7 @@ async function main() {
     console.log('5. Creating domain...');
     const domainCreate = await client.domainCreate({
       name: 'test-domain-123.com',
-      period: 1,
+      period: { value: 1, unit: 'y' },
       registrant: 'CONTACT123',
       contacts: [
         { type: 'admin', id: 'CONTACT123' },
@@ -83,13 +84,13 @@ async function main() {
     const feeCheck = await client.feeCheck({
       command: 'create',
       domain: 'test-domain-123.com',
-      period: 1,
+      period: { value: 1, unit: 'y' },
       currency: 'USD'
     });
     console.log('Fee check results:');
-    feeCheck.extension.forEach((fee: any) => {
-      console.log(`  - ${fee.command}: ${fee.fee} ${fee.currency}`);
-    });
+    if (feeCheck.data) {
+      console.log(`  Fee: ${JSON.stringify(feeCheck.data)}`);
+    }
     console.log();
 
     // 7. Logout

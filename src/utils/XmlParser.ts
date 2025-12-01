@@ -7,7 +7,7 @@ export class XmlParser {
         explicitArray: false,
         ignoreAttrs: false,
         mergeAttrs: true 
-      }, (err, result) => {
+      }, (err: Error | null, result: any) => {
         if (err) {
           reject(err);
         } else {

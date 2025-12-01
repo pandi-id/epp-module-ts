@@ -491,7 +491,8 @@ export class EppClient {
    * ```
    */
   async contactInfo(id: string, authInfo?: string): Promise<EppResponse> {
-    const xml = this.eppRequest.contactInfo(id, authInfo);
+    const authInfoObj = authInfo ? { pw: authInfo } : undefined;
+    const xml = this.eppRequest.contactInfo(id, authInfoObj);
     return this.sendCommand(xml);
   }
 
@@ -664,7 +665,8 @@ export class EppClient {
    * ```
    */
   async domainInfo(domain: string, authInfo?: string): Promise<EppResponse> {
-    const xml = this.eppRequest.domainInfo(domain, authInfo);
+    const authInfoObj = authInfo ? { pw: authInfo } : undefined;
+    const xml = this.eppRequest.domainInfo(domain, authInfoObj);
     return this.sendCommand(xml);
   }
 

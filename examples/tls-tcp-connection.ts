@@ -7,7 +7,7 @@
  * Referensi: RFC 5734 - EPP Transport over TCP
  */
 
-import { EppClient } from '../src/core/EppClient';
+import { EppClient } from '../src/index';
 import * as fs from 'fs';
 
 /**

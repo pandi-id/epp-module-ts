@@ -5,7 +5,7 @@
  * Referensi: RFC 5731 Section 3.2.4 - EPP <transfer> Command
  */
 
-import { EppClient } from '../src/core/EppClient';
+import { EppClient } from '../src/index';
 import { DomainTransferRequest } from '../src/types';
 
 /**
@@ -18,7 +18,7 @@ import { DomainTransferRequest } from '../src/types';
  */
 async function gainingRegistrarRequestTransfer() {
   const client = new EppClient({
-    server: 'https://epp.gaining-registrar.example',
+    host: 'epp.gaining-registrar.example', port: 700,
     username: 'gaining-registrar-id',
     password: 'password',
     debug: true
@@ -93,7 +93,7 @@ async function gainingRegistrarRequestTransfer() {
  */
 async function gainingRegistrarQueryTransfer() {
   const client = new EppClient({
-    server: 'https://epp.gaining-registrar.example',
+    host: 'epp.gaining-registrar.example', port: 700,
     username: 'gaining-registrar-id',
     password: 'password'
   });
@@ -159,7 +159,7 @@ async function gainingRegistrarQueryTransfer() {
  */
 async function gainingRegistrarCancelTransfer() {
   const client = new EppClient({
-    server: 'https://epp.gaining-registrar.example',
+    host: 'epp.gaining-registrar.example', port: 700,
     username: 'gaining-registrar-id',
     password: 'password'
   });
@@ -202,7 +202,7 @@ async function gainingRegistrarCancelTransfer() {
  */
 async function losingRegistrarApproveTransfer() {
   const client = new EppClient({
-    server: 'https://epp.losing-registrar.example',
+    host: 'epp.losing-registrar.example', port: 700,
     username: 'losing-registrar-id',
     password: 'password'
   });
@@ -246,7 +246,7 @@ async function losingRegistrarApproveTransfer() {
  */
 async function losingRegistrarRejectTransfer() {
   const client = new EppClient({
-    server: 'https://epp.losing-registrar.example',
+    host: 'epp.losing-registrar.example', port: 700,
     username: 'losing-registrar-id',
     password: 'password'
   });
