@@ -148,8 +148,27 @@ try {
 - ✅ **Update**: Modify host information (IP addresses, name changes)
 - ✅ **Delete**: Remove host objects
 
-### Extensions
+### EPP Extensions
+- ✅ **Launch Extension (RFC 8334)**: Launch phase mapping untuk sunrise/landrush/claims
+  - Sunrise period registrations dengan SMD
+  - Claims notice processing
+  - Landrush registrations
+  - Application ID tracking
+- ✅ **TMCH Extension**: Trademark Clearinghouse integration
+  - Signed Mark Data (SMD) validation
+  - Claims notice handling
+  - Trademark verification
+  - Nice Classification support
 - ✅ **Fee Extension (RFC 8748)**: Query operation costs
+  - Fee checking untuk create/renew/transfer/restore
+  - Multi-currency support
+  - Grace period fee information
+  - Refundable fee tracking
+- ✅ **RGP Extension (RFC 3915)**: Registry Grace Period operations
+  - Grace period status tracking (Add/Renew/Transfer)
+  - Redemption period management
+  - Domain restore operations
+  - Pending delete handling
 - ✅ **DNSSEC Extension (RFC 5910)**: DNS Security Extensions support
 - ✅ **Multiple Postal Info**: Support untuk loc dan int formats
 - ✅ **IPv6 Support**: Full IPv4 dan IPv6 support untuk glue records
