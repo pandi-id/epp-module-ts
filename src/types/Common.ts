@@ -1,37 +1,77 @@
 /**
  * EPP Client Configuration
- * Referensi: RFC 5730 Section 2 - Transport Considerations
+ * Referensi: RFC 5734 - EPP Transport over TCP
  * 
- * EPP menggunakan koneksi persistent dan session-oriented.
- * Konfigurasi ini mendefinisikan parameter untuk koneksi EPP.
+ * EPP menggunakan persistent TCP connection dengan TLS encryption.
+ * Default port adalah 700 untuk EPP over TCP (RFC 5734 Section 3).
  */
 export interface EppConfig {
-  /** EPP server URL - MUST use HTTPS (RFC 5734) atau EPP over TCP (RFC 5734) */
-  server: string;
+  /** 
+   * EPP server hostname (RFC 5734 Section 2)
+   * Example: 'epp.registry.example'
+   */
+  host: string;
   
-  /** Client identifier untuk autentikasi (RFC 5730 Section 2.9.1.1) */
+  /** 
+   * EPP server port (RFC 5734 Section 3)
+   * Default: 700 (standard EPP port)
+   */
+  port?: number;
+  
+  /** 
+   * Client identifier untuk autentikasi (RFC 5730 Section 2.9.1.1)
+   */
   username: string;
   
-  /** Password untuk autentikasi - MUST be encrypted in transit (RFC 5730) */
+  /** 
+   * Password untuk autentikasi - MUST be encrypted in transit (RFC 5730)
+   */
   password: string;
   
-  /** Language preference (RFC 5730 Section 2.9.1.1) - Default: 'en' */
+  /** 
+   * Language preference (RFC 5730 Section 2.9.1.1) - Default: 'en'
+   */
   lang?: string;
   
-  /** EPP protocol version (RFC 5730 Section 2.9.1.1) - Default: '1.0' */
+  /** 
+   * EPP protocol version (RFC 5730 Section 2.9.1.1) - Default: '1.0'
+   */
   version?: string;
   
-  /** Request timeout dalam milliseconds - Default: 30000 */
+  /** 
+   * Request timeout dalam milliseconds - Default: 30000
+   */
   timeout?: number;
   
-  /** Enable debug logging untuk development */
+  /** 
+   * Enable debug logging untuk development
+   */
   debug?: boolean;
   
-  /** Optional: Client certificate untuk mutual TLS (RFC 5734 Section 5) */
-  clientCert?: string;
+  /** 
+   * Client certificate untuk mutual TLS (RFC 5734 Section 5)
+   * Dapat berupa string (PEM format) atau Buffer
+   */
+  clientCert?: string | Buffer;
   
-  /** Optional: Client certificate key */
-  clientKey?: string;
+  /** 
+   * Client certificate key
+   * Dapat berupa string (PEM format) atau Buffer
+   */
+  clientKey?: string | Buffer;
+  
+  /** 
+   * Certificate Authority certificates untuk verify server
+   * Dapat berupa string, Buffer, atau array of strings/Buffers
+   */
+  ca?: string | Buffer | Array<string | Buffer>;
+  
+  /** 
+   * Reject unauthorized certificates
+   * Default: true (recommended untuk production)
+   * Set false hanya untuk testing dengan self-signed certificates
+   */
+  rejectUnauthorized?: boolean;
 }
 
 /**

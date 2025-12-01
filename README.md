@@ -46,9 +46,10 @@ pnpm add epp-client
 ```typescript
 import { EppClient } from 'epp-client';
 
-// Initialize client
+// Initialize client dengan TLS/TCP
 const client = new EppClient({
-  server: 'https://epp.registry.example',
+  host: 'epp.registry.example',  // EPP server hostname
+  port: 700,                      // Standard EPP port (RFC 5734)
   username: 'registrar-id',
   password: 'password',
   timeout: 30000,
@@ -56,8 +57,13 @@ const client = new EppClient({
 });
 
 try {
+  // Connect via TLS/TCP (RFC 5734)
+  await client.connect();
+  console.log('Connected via TLS/TCP');
+  
   // Login - RFC 5730 Section 2.9.1.1
   await client.login();
+  console.log('Authenticated');
   
   // Check domain availability - RFC 5731 Section 3.1.1
   const result = await client.domainCheck(['example.com', 'example.net']);
@@ -79,19 +85,37 @@ try {
   
   // Logout - RFC 5730 Section 2.9.1.2
   await client.logout();
+  console.log('Logged out');
+  
+  // Disconnect
+  await client.disconnect();
+  console.log('Disconnected');
   
 } catch (error) {
   console.error(`EPP Error ${error.code}: ${error.message}`);
+  
+  // Always cleanup
+  if (client.isConnected()) {
+    await client.disconnect();
+  }
 }
 ```
 
 ## ✨ Features
 
+### Transport Layer (RFC 5734)
+- ✅ **TLS/TCP Connection**: Native TCP socket dengan TLS encryption
+- ✅ **Standard Port 700**: EPP-compliant port configuration
+- ✅ **4-byte Framing**: Proper EPP frame format implementation
+- ✅ **Persistent Connection**: Stateful session management
+- ✅ **TLS 1.2+**: Minimum TLS 1.2 enforced
+- ✅ **Mutual TLS**: Client certificate authentication support
+
 ### Core Protocol (RFC 5730)
-- ✅ **Session Management**: Login/logout dengan password change support
+- ✅ **Session Management**: Connect/disconnect, login/logout
 - ✅ **Result Codes**: Comprehensive error handling dengan RFC-compliant codes
 - ✅ **Transaction IDs**: Client dan server transaction tracking
-- ✅ **Transport**: HTTPS/TLS support untuk secure communication
+- ✅ **Server Greeting**: Automatic greeting message processing
 
 ### Domain Operations (RFC 5731)
 - ✅ **Check**: Verify domain availability (bulk support)
