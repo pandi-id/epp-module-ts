@@ -150,6 +150,27 @@ export interface DomainCreateRequest {
   authInfo: {
     pw: string;
   };
+
+  /**
+   * DNSSEC Extension (RFC 5910)
+   * OPTIONAL - DNSSEC delegation signer (DS) data atau key data
+   * Used untuk secure the domain dengan DNSSEC
+   */
+  dnssec?: {
+    maxSigLife?: number;
+    dsData?: Array<{
+      keyTag: number;
+      alg: number;
+      digestType: number;
+      digest: string;
+    }>;
+    keyData?: Array<{
+      flags: number;
+      protocol: number;
+      alg: number;
+      pubKey: string;
+    }>;
+  };
 }
 
 /**
@@ -204,6 +225,47 @@ export interface DomainUpdateRequest {
     authInfo?: {
       pw: string;
     };
+  };
+
+  /**
+   * DNSSEC Extension (RFC 5910)
+   * OPTIONAL - Add, remove, atau change DNSSEC data
+   */
+  dnssec?: {
+    add?: {
+      dsData?: Array<{
+        keyTag: number;
+        alg: number;
+        digestType: number;
+        digest: string;
+      }>;
+      keyData?: Array<{
+        flags: number;
+        protocol: number;
+        alg: number;
+        pubKey: string;
+      }>;
+      maxSigLife?: number;
+    };
+    rem?: {
+      all?: boolean;
+      dsData?: Array<{
+        keyTag: number;
+        alg: number;
+        digestType: number;
+        digest: string;
+      }>;
+      keyData?: Array<{
+        flags: number;
+        protocol: number;
+        alg: number;
+        pubKey: string;
+      }>;
+    };
+    chg?: {
+      maxSigLife?: number;
+    };
+    urgent?: boolean;
   };
 }
 
@@ -334,5 +396,31 @@ export interface DomainInfo {
   /** Authorization information (RFC 5731 Section 3.1.2) */
   authInfo?: {
     pw: string;
+  };
+
+  /**
+   * DNSSEC Extension (RFC 5910)
+   * OPTIONAL - DNSSEC delegation signer information
+   */
+  dnssec?: {
+    maxSigLife?: number;
+    dsData?: Array<{
+      keyTag: number;
+      alg: number;
+      digestType: number;
+      digest: string;
+      keyData?: {
+        flags: number;
+        protocol: number;
+        alg: number;
+        pubKey: string;
+      };
+    }>;
+    keyData?: Array<{
+      flags: number;
+      protocol: number;
+      alg: number;
+      pubKey: string;
+    }>;
   };
 }

@@ -26,7 +26,8 @@ export class EppRequest {
         ],
         'svcExtension': {
           'extURI': [
-            'urn:ietf:params:xml:ns:fee-0.11'
+            'urn:ietf:params:xml:ns:fee-0.11',
+            'urn:ietf:params:xml:ns:secDNS-1.1'
           ]
         }
       }
@@ -216,7 +217,7 @@ export class EppRequest {
   domainCreate(data: any): string {
     const clTRID = this.xmlBuilder.generateClTRID();
     
-    const command = {
+    const command: any = {
       'command': {
         'create': {
           'domain:create': data
@@ -225,13 +226,21 @@ export class EppRequest {
       }
     };
 
+    // Add DNSSEC extension if present
+    if (data.dnssec) {
+      const dnssecExt = this.buildDnssecExtension(data.dnssec);
+      if (dnssecExt) {
+        command.command['extension'] = dnssecExt;
+      }
+    }
+
     return this.xmlBuilder.buildEppRequest(command);
   }
 
   domainUpdate(data: any): string {
     const clTRID = this.xmlBuilder.generateClTRID();
     
-    const command = {
+    const command: any = {
       'command': {
         'update': {
           'domain:update': data
@@ -239,6 +248,14 @@ export class EppRequest {
         'clTRID': clTRID
       }
     };
+
+    // Add DNSSEC extension if present
+    if (data.dnssec) {
+      const dnssecExt = this.buildDnssecUpdateExtension(data.dnssec);
+      if (dnssecExt) {
+        command.command['extension'] = dnssecExt;
+      }
+    }
 
     return this.xmlBuilder.buildEppRequest(command);
   }
@@ -403,5 +420,147 @@ export class EppRequest {
     };
 
     return this.xmlBuilder.buildEppRequest(command);
+  }
+
+  /**
+   * Build DNSSEC extension for create/update commands (RFC 5910)
+   * @private
+   */
+  private buildDnssecExtension(dnssec: any): any {
+    if (!dnssec) return null;
+
+    const secDNS: any = {};
+
+    // For domain create
+    if (dnssec.maxSigLife !== undefined) {
+      secDNS['secDNS:maxSigLife'] = dnssec.maxSigLife;
+    }
+
+    // DS Data
+    if (dnssec.dsData && dnssec.dsData.length > 0) {
+      secDNS['secDNS:dsData'] = dnssec.dsData.map((ds: any) => {
+        const dsItem: any = {
+          'secDNS:keyTag': ds.keyTag,
+          'secDNS:alg': ds.alg,
+          'secDNS:digestType': ds.digestType,
+          'secDNS:digest': ds.digest
+        };
+
+        // DS Data may include key data
+        if (ds.keyData) {
+          dsItem['secDNS:keyData'] = {
+            'secDNS:flags': ds.keyData.flags,
+            'secDNS:protocol': ds.keyData.protocol,
+            'secDNS:alg': ds.keyData.alg,
+            'secDNS:pubKey': ds.keyData.pubKey
+          };
+        }
+
+        return dsItem;
+      });
+    }
+
+    // Key Data (standalone)
+    if (dnssec.keyData && dnssec.keyData.length > 0) {
+      secDNS['secDNS:keyData'] = dnssec.keyData.map((key: any) => ({
+        'secDNS:flags': key.flags,
+        'secDNS:protocol': key.protocol,
+        'secDNS:alg': key.alg,
+        'secDNS:pubKey': key.pubKey
+      }));
+    }
+
+    return {
+      'secDNS:create': secDNS
+    };
+  }
+
+  /**
+   * Build DNSSEC update extension (RFC 5910)
+   * @private
+   */
+  private buildDnssecUpdateExtension(dnssec: any): any {
+    if (!dnssec) return null;
+
+    const secDNSUpdate: any = {};
+
+    // Urgent flag
+    if (dnssec.urgent !== undefined) {
+      secDNSUpdate['$'] = { urgent: dnssec.urgent };
+    }
+
+    // Add DS/Key data
+    if (dnssec.add) {
+      const addData: any = {};
+      
+      if (dnssec.add.dsData && dnssec.add.dsData.length > 0) {
+        addData['secDNS:dsData'] = dnssec.add.dsData.map((ds: any) => ({
+          'secDNS:keyTag': ds.keyTag,
+          'secDNS:alg': ds.alg,
+          'secDNS:digestType': ds.digestType,
+          'secDNS:digest': ds.digest
+        }));
+      }
+
+      if (dnssec.add.keyData && dnssec.add.keyData.length > 0) {
+        addData['secDNS:keyData'] = dnssec.add.keyData.map((key: any) => ({
+          'secDNS:flags': key.flags,
+          'secDNS:protocol': key.protocol,
+          'secDNS:alg': key.alg,
+          'secDNS:pubKey': key.pubKey
+        }));
+      }
+
+      if (dnssec.add.maxSigLife !== undefined) {
+        addData['secDNS:maxSigLife'] = dnssec.add.maxSigLife;
+      }
+
+      if (Object.keys(addData).length > 0) {
+        secDNSUpdate['secDNS:add'] = addData;
+      }
+    }
+
+    // Remove DS/Key data
+    if (dnssec.rem) {
+      const remData: any = {};
+
+      // Remove all DNSSEC data
+      if (dnssec.rem.all) {
+        remData['secDNS:all'] = 'true';
+      } else {
+        if (dnssec.rem.dsData && dnssec.rem.dsData.length > 0) {
+          remData['secDNS:dsData'] = dnssec.rem.dsData.map((ds: any) => ({
+            'secDNS:keyTag': ds.keyTag,
+            'secDNS:alg': ds.alg,
+            'secDNS:digestType': ds.digestType,
+            'secDNS:digest': ds.digest
+          }));
+        }
+
+        if (dnssec.rem.keyData && dnssec.rem.keyData.length > 0) {
+          remData['secDNS:keyData'] = dnssec.rem.keyData.map((key: any) => ({
+            'secDNS:flags': key.flags,
+            'secDNS:protocol': key.protocol,
+            'secDNS:alg': key.alg,
+            'secDNS:pubKey': key.pubKey
+          }));
+        }
+      }
+
+      if (Object.keys(remData).length > 0) {
+        secDNSUpdate['secDNS:rem'] = remData;
+      }
+    }
+
+    // Change maxSigLife
+    if (dnssec.chg && dnssec.chg.maxSigLife !== undefined) {
+      secDNSUpdate['secDNS:chg'] = {
+        'secDNS:maxSigLife': dnssec.chg.maxSigLife
+      };
+    }
+
+    return {
+      'secDNS:update': secDNSUpdate
+    };
   }
 }

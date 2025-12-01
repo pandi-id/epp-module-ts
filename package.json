@@ -17,6 +17,7 @@
         "example:ssl": "ts-node examples/ssl-configurations.ts",
         "example:domain": "ts-node examples/complete-domain-registration.ts",
         "example:transfer": "ts-node examples/domain-transfer.ts",
+        "example:dnssec": "ts-node examples/dnssec-operations.ts",
         "example:all": "npm run example:basic && npm run example:tls && npm run example:ssl",
         "prepublishOnly": "npm run build && npm test"
     },

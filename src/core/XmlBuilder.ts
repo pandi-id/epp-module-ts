@@ -19,6 +19,7 @@ export class XmlBuilder {
           'xmlns:contact': 'urn:ietf:params:xml:ns:contact-1.0',
           'xmlns:host': 'urn:ietf:params:xml:ns:host-1.0',
           'xmlns:fee': 'urn:ietf:params:xml:ns:fee-0.11',
+          'xmlns:secDNS': 'urn:ietf:params:xml:ns:secDNS-1.1',
         },
         ...command
       }

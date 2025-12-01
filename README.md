@@ -6,6 +6,7 @@
 [![RFC 5731](https://img.shields.io/badge/RFC-5731-blue.svg)](https://www.rfc-editor.org/rfc/rfc5731.html)
 [![RFC 5732](https://img.shields.io/badge/RFC-5732-blue.svg)](https://www.rfc-editor.org/rfc/rfc5732.html)
 [![RFC 5733](https://img.shields.io/badge/RFC-5733-blue.svg)](https://www.rfc-editor.org/rfc/rfc5733.html)
+[![RFC 5910](https://img.shields.io/badge/RFC-5910-blue.svg)](https://www.rfc-editor.org/rfc/rfc5910.html)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -148,6 +149,7 @@ try {
 
 ### Extensions
 - ✅ **Fee Extension (RFC 8748)**: Query operation costs
+- ✅ **DNSSEC Extension (RFC 5910)**: DNS Security Extensions support
 - ✅ **Multiple Postal Info**: Support untuk loc dan int formats
 - ✅ **IPv6 Support**: Full IPv4 dan IPv6 support untuk glue records
 
@@ -175,6 +177,13 @@ try {
   - Certificate management
   - Troubleshooting SSL issues
   - Security best practices
+
+- **[DNSSEC Guide](./docs/DNSSEC_GUIDE.md)**: DNSSEC Extension guide
+  - DNSSEC concepts and operations
+  - DS and DNSKEY record management
+  - Algorithm and digest type support
+  - Key rollover procedures
+  - Best practices and troubleshooting
 
 - **[TLS/TCP Implementation](./docs/TLS_TCP_IMPLEMENTATION.md)**: Transport layer guide
   - TLS/TCP connection details
@@ -258,6 +267,13 @@ See [SSL/TLS Configuration Guide](./docs/SSL_TLS_CONFIGURATION.md) for complete 
   - Transfer approval/rejection (losing registrar)
   - Transfer query dan cancellation
   - Transfer best practices
+
+- **[DNSSEC Operations](./examples/dnssec-operations.ts)**
+  - Creating domains with DNSSEC data
+  - Adding/removing DS records
+  - Key rollover procedures
+  - Managing DNSKEY records
+  - Emergency DNSSEC removal
 
 ## 🎓 Core Concepts
 
@@ -445,6 +461,53 @@ await client.domainTransfer({
 });
 ```
 
+### DNSSEC Operations
+
+```typescript
+// Create domain with DNSSEC (RFC 5910)
+await client.domainCreate({
+  name: 'secure-example.com',
+  period: { value: 1, unit: 'y' },
+  registrant: 'contact-id',
+  authInfo: { pw: 'auth-code' },
+  // DNSSEC Extension
+  dnssec: {
+    maxSigLife: 604800, // 7 days in seconds
+    dsData: [{
+      keyTag: 12345,
+      alg: 8,          // RSA/SHA-256
+      digestType: 2,   // SHA-256
+      digest: '49FD46E6C4B45C55D4AC69CBD3CD34AC1AFE51DE'
+    }]
+  }
+});
+
+// Add DNSSEC to existing domain
+await client.domainUpdate({
+  name: 'example.com',
+  dnssec: {
+    add: {
+      dsData: [{
+        keyTag: 54321,
+        alg: 13,         // ECDSA P-256
+        digestType: 4,   // SHA-384
+        digest: '2BB183AF5F22588179A53B0A98631FAD1A292118'
+      }]
+    },
+    urgent: false
+  }
+});
+
+// Remove all DNSSEC data
+await client.domainUpdate({
+  name: 'example.com',
+  dnssec: {
+    rem: { all: true },
+    urgent: true
+  }
+});
+```
+
 ## 🔧 RFC Compliance
 
 This client implements the following RFCs:
@@ -456,6 +519,7 @@ This client implements the following RFCs:
 | [RFC 5732](https://www.rfc-editor.org/rfc/rfc5732.html) | EPP Host Mapping | ✅ Implemented |
 | [RFC 5733](https://www.rfc-editor.org/rfc/rfc5733.html) | EPP Contact Mapping | ✅ Implemented |
 | [RFC 5734](https://www.rfc-editor.org/rfc/rfc5734.html) | EPP Transport over TCP | ✅ Implemented |
+| [RFC 5910](https://www.rfc-editor.org/rfc/rfc5910.html) | DNSSEC Extensions for EPP | ✅ Implemented |
 | [RFC 8748](https://www.rfc-editor.org/rfc/rfc8748.html) | EPP Fee Extension | ✅ Implemented |
 
 ## 🤝 Contributing

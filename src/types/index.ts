@@ -52,3 +52,19 @@ export type {
   HostInfo,
   HostAddress
 } from './Host';
+
+// DNSSEC Types (RFC 5910)
+export type {
+  DsData,
+  KeyData,
+  DnssecCreate,
+  DnssecUpdate,
+  DnssecInfo
+} from './Dnssec';
+
+export {
+  DNSSEC_ALGORITHMS,
+  DNSSEC_DIGEST_TYPES,
+  validateDsData,
+  validateKeyData
+} from './Dnssec';
