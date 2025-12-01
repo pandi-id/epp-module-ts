@@ -110,6 +110,10 @@ try {
 - ✅ **Persistent Connection**: Stateful session management
 - ✅ **TLS 1.2+**: Minimum TLS 1.2 enforced
 - ✅ **Mutual TLS**: Client certificate authentication support
+- ✅ **Custom SSL/TLS**: Comprehensive SSL configuration options
+- ✅ **Certificate Validation**: Proper certificate chain verification
+- ✅ **SNI Support**: Server Name Indication untuk multi-domain servers
+- ✅ **Cipher Control**: Custom cipher suite configuration
 
 ### Core Protocol (RFC 5730)
 - ✅ **Session Management**: Connect/disconnect, login/logout
@@ -158,16 +162,88 @@ try {
 
 ### Complete Guides
 
-- **[RFC Documentation](./RFC_DOCUMENTATION.md)**: Complete RFC reference guide
+- **[RFC Documentation](./docs/RFC_DOCUMENTATION.md)**: Complete RFC reference guide
   - Detailed type documentation dengan RFC sections
   - Method documentation dengan result codes
   - Best practices dan security considerations
   - Complete examples
 
-- **[Perbaikan Summary](./PERBAIKAN_SUMMARY.md)**: Summary of improvements
-  - What was fixed dan improved
-  - RFC compliance details
-  - Technical improvements
+- **[SSL/TLS Configuration](./docs/SSL_TLS_CONFIGURATION.md)**: SSL/TLS security guide
+  - Comprehensive SSL/TLS options
+  - Production configuration examples
+  - Mutual TLS authentication
+  - Certificate management
+  - Troubleshooting SSL issues
+  - Security best practices
+
+- **[TLS/TCP Implementation](./docs/TLS_TCP_IMPLEMENTATION.md)**: Transport layer guide
+  - TLS/TCP connection details
+  - Frame format implementation
+  - Connection management
+  - Migration from HTTP to TLS/TCP
+
+### SSL/TLS Configuration
+
+EPP Client support comprehensive SSL/TLS configuration untuk secure communications:
+
+#### Basic Production Configuration
+```typescript
+const client = new EppClient({
+  host: 'epp.registry.com',
+  port: 700,
+  username: 'registrar-id',
+  password: 'password',
+  
+  // SSL/TLS Configuration
+  rejectUnauthorized: true,    // MUST be true in production!
+  minVersion: 'TLSv1.2',       // Minimum TLS 1.2
+  maxVersion: 'TLSv1.3',       // Prefer TLS 1.3
+  
+  timeout: 30000
+});
+```
+
+#### Mutual TLS (Client Certificate Authentication)
+```typescript
+import * as fs from 'fs';
+
+const client = new EppClient({
+  host: 'epp.registry.com',
+  port: 700,
+  username: 'registrar-id',
+  password: 'password',
+  
+  // Mutual TLS Configuration
+  clientCert: fs.readFileSync('./certs/client-cert.pem'),
+  clientKey: fs.readFileSync('./certs/client-key.pem'),
+  ca: fs.readFileSync('./certs/ca-bundle.pem'),
+  passphrase: 'key-passphrase', // If key is encrypted
+  
+  // TLS Options
+  rejectUnauthorized: true,
+  minVersion: 'TLSv1.2',
+  
+  // Custom Ciphers (optional)
+  ciphers: 'TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256',
+  
+  // SNI Support (optional)
+  servername: 'epp.registry.com'
+});
+```
+
+**Available SSL/TLS Options:**
+- `rejectUnauthorized`: Validate server certificates (default: true)
+- `minVersion`: Minimum TLS version (default: 'TLSv1.2')
+- `maxVersion`: Maximum TLS version (default: 'TLSv1.3')
+- `clientCert`: Client certificate for mutual TLS
+- `clientKey`: Client private key
+- `ca`: Certificate Authority bundle
+- `passphrase`: Passphrase for encrypted private key
+- `ciphers`: Custom cipher suites
+- `servername`: Server name for SNI
+- `checkServerIdentity`: Enable/disable server identity check
+
+See [SSL/TLS Configuration Guide](./docs/SSL_TLS_CONFIGURATION.md) for complete documentation.
 
 ### Examples
 

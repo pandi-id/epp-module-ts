@@ -121,11 +121,20 @@ export class EppClient {
         host: this.config.host,
         port: this.config.port || 700,
         rejectUnauthorized: this.config.rejectUnauthorized !== false,
-        minVersion: 'TLSv1.2', // Minimum TLS 1.2
+        // TLS version constraints
+        minVersion: (this.config.minVersion as any) || 'TLSv1.2', // Minimum TLS 1.2
+        maxVersion: this.config.maxVersion as any,
         // Mutual TLS support
         cert: this.config.clientCert,
         key: this.config.clientKey,
         ca: this.config.ca,
+        passphrase: this.config.passphrase,
+        // Cipher configuration
+        ciphers: this.config.ciphers,
+        // SNI support
+        servername: this.config.servername || this.config.host,
+        // Server identity verification
+        checkServerIdentity: this.config.checkServerIdentity !== false ? undefined : () => undefined,
       };
 
       if (this.config.debug) {

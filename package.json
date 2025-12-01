@@ -12,6 +12,12 @@
         "lint": "eslint src/**/*.ts test/**/*.ts",
         "lint:fix": "eslint src/**/*.ts test/**/*.ts --fix",
         "example": "ts-node examples/basic-usage.ts",
+        "example:basic": "ts-node examples/basic-usage.ts",
+        "example:tls": "ts-node examples/tls-tcp-connection.ts",
+        "example:ssl": "ts-node examples/ssl-configurations.ts",
+        "example:domain": "ts-node examples/complete-domain-registration.ts",
+        "example:transfer": "ts-node examples/domain-transfer.ts",
+        "example:all": "npm run example:basic && npm run example:tls && npm run example:ssl",
         "prepublishOnly": "npm run build && npm test"
     },
     "keywords": [

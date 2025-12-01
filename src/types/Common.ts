@@ -72,6 +72,43 @@ export interface EppConfig {
    * Set false hanya untuk testing dengan self-signed certificates
    */
   rejectUnauthorized?: boolean;
+  
+  /** 
+   * SSL/TLS cipher suites
+   * Default: Uses Node.js default cipher list
+   * Example: 'TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256'
+   */
+  ciphers?: string;
+  
+  /** 
+   * Minimum TLS version
+   * Default: 'TLSv1.2'
+   * Options: 'TLSv1', 'TLSv1.1', 'TLSv1.2', 'TLSv1.3'
+   */
+  minVersion?: string;
+  
+  /** 
+   * Maximum TLS version
+   * Default: 'TLSv1.3'
+   */
+  maxVersion?: string;
+  
+  /** 
+   * Passphrase untuk encrypted client key
+   */
+  passphrase?: string;
+  
+  /** 
+   * Server name untuk SNI (Server Name Indication)
+   * Default: sama dengan host
+   */
+  servername?: string;
+  
+  /** 
+   * Check server identity
+   * Default: true
+   */
+  checkServerIdentity?: boolean;
 }
 
 /**
