@@ -142,8 +142,8 @@ describe('RGP Extension', () => {
   describe('Restore Report Validation', () => {
     test('should validate complete restore report', () => {
       const report: RgpRestoreReport = {
-        preData: '2024-01-01T00:00:00Z',
-        postData: '2024-01-15T10:00:00Z',
+        preData: 'Registration data of the domain before it was deleted.',
+        postData: 'Registration data of the domain after it was restored.',
         delTime: '2024-01-10T00:00:00Z',
         resTime: '2024-01-12T00:00:00Z',
         resReason: 'Domain was deleted by mistake. Need to restore for business continuity.',
@@ -166,7 +166,7 @@ describe('RGP Extension', () => {
     });
 
     test('should require preData', () => {
-      const report: any = {
+      const report = {
         postData: '2024-01-15T10:00:00Z',
         delTime: '2024-01-10T00:00:00Z',
         resTime: '2024-01-12T00:00:00Z',
@@ -174,13 +174,13 @@ describe('RGP Extension', () => {
         statement: [{ text: 'Statement' }]
       };
 
-      const result = validateRestoreReport(report);
+      const result = validateRestoreReport(report as RgpRestoreReport);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('preData is required');
     });
 
     test('should require postData', () => {
-      const report: any = {
+      const report = {
         preData: '2024-01-01T00:00:00Z',
         delTime: '2024-01-10T00:00:00Z',
         resTime: '2024-01-12T00:00:00Z',
@@ -188,13 +188,13 @@ describe('RGP Extension', () => {
         statement: [{ text: 'Statement' }]
       };
 
-      const result = validateRestoreReport(report);
+      const result = validateRestoreReport(report as RgpRestoreReport);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('postData is required');
     });
 
     test('should require resReason', () => {
-      const report: any = {
+      const report = {
         preData: '2024-01-01T00:00:00Z',
         postData: '2024-01-15T10:00:00Z',
         delTime: '2024-01-10T00:00:00Z',
@@ -203,24 +203,25 @@ describe('RGP Extension', () => {
         statement: [{ text: 'Statement' }]
       };
 
-      const result = validateRestoreReport(report);
+      const result = validateRestoreReport(report as RgpRestoreReport);
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('resReason is required');
     });
 
-    test('should require at least one statement', () => {
+    test('should require the two RFC 3915 statements', () => {
       const report: RgpRestoreReport = {
-        preData: '2024-01-01T00:00:00Z',
-        postData: '2024-01-15T10:00:00Z',
+        preData: 'Registration data before deletion',
+        postData: 'Registration data after restore',
         delTime: '2024-01-10T00:00:00Z',
         resTime: '2024-01-12T00:00:00Z',
         resReason: 'Need to restore',
-        statement: []
+        statement: [{ text: 'Only one statement' }]
       };
 
       const result = validateRestoreReport(report);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('At least one statement is required');
+      expect(result.errors).toContain('Exactly two statements are required (RFC 3915 Section 4.2.5)');
+      expect(validateRestoreReport({ ...report, statement: [] }).valid).toBe(false);
     });
 
     test('should validate statement text', () => {
@@ -242,17 +243,31 @@ describe('RGP Extension', () => {
 
     test('should validate date order', () => {
       const report: RgpRestoreReport = {
-        preData: '2024-01-15T00:00:00Z',
-        postData: '2024-01-20T00:00:00Z',
-        delTime: '2024-01-10T00:00:00Z', // Before preData - invalid!
-        resTime: '2024-01-12T00:00:00Z',
+        preData: 'Registration data before deletion',
+        postData: 'Registration data after restore',
+        delTime: '2024-01-12T00:00:00Z',
+        resTime: '2024-01-10T00:00:00Z', // Before delTime - invalid!
         resReason: 'Need to restore',
-        statement: [{ text: 'Statement' }]
+        statement: [{ text: 'Statement one' }, { text: 'Statement two' }]
       };
 
       const result = validateRestoreReport(report);
       expect(result.valid).toBe(false);
-      expect(result.errors).toContain('delTime must be after preData');
+      expect(result.errors).toContain('resTime must not be before delTime');
+    });
+
+    test('should treat preData and postData as registration data, not dates', () => {
+      const report: RgpRestoreReport = {
+        preData: '<domain:name>example.com</domain:name> registrant jd1234',
+        postData: '<domain:name>example.com</domain:name> registrant jd1234',
+        delTime: new Date('2024-01-10T00:00:00Z'),
+        resTime: '2024-01-12T00:00:00Z',
+        resReason: { text: 'Registrant error.', lang: 'en' },
+        statement: ['Statement one', { text: 'Statement two', lang: 'en' }]
+      };
+
+      expect(validateRestoreReport(report)).toEqual({ valid: true, errors: [] });
+      expect(validateRestoreReport({ ...report, delTime: 'not a date' }).errors).toContain('delTime must be a valid date-time');
     });
   });
 
@@ -292,6 +307,7 @@ describe('RGP Extension', () => {
       
       // Redemption period (30 days)
       const redemptionEnd = calculateGracePeriodEnd(deleteDate, 30);
+      expect(redemptionEnd.toISOString()).toBe('2024-05-24T10:00:00.000Z');
       
       // Check if can restore during redemption
       expect(canRestore('redemptionPeriod')).toBe(true);
@@ -310,14 +326,18 @@ describe('RGP Extension', () => {
 
       // Create restore report
       const report: RgpRestoreReport = {
-        preData: '2024-01-01T00:00:00Z',
-        postData: '2024-01-25T10:00:00Z',
+        preData: 'Registration data of the domain before it was deleted.',
+        postData: 'Registration data of the domain after it was restored.',
         delTime: '2024-01-20T00:00:00Z',
         resTime: '2024-01-22T00:00:00Z',
         resReason: 'Domain deleted by mistake, need for business operations.',
         statement: [
           {
-            text: 'Implemented new deletion approval workflow.',
+            text: 'This registrar has not restored the domain to assume the rights to use or sell it.',
+            lang: 'en'
+          },
+          {
+            text: 'The information in this report is true to the best of this registrar\'s knowledge.',
             lang: 'en'
           }
         ]

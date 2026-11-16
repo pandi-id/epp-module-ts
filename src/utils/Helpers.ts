@@ -1,343 +1,171 @@
-/**
- * Utility functions for EPP client
- */
+import { randomInt } from 'crypto';
+import { isIPv4, isIPv6 } from 'net';
+import { domainToASCII, domainToUnicode } from 'url';
+import { EppValidationError } from '../core/Errors';
 
 /**
- * Validates an email address
+ * Validation and formatting helpers for EPP data.
  */
+
+const LDH_NAME = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
+
 export function validateEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
 /**
- * Validates a domain name
+ * Whether the name is a syntactically valid domain name in LDH form (IDNs
+ * as A-labels, e.g. "xn--bcher-kva.example"), at most 253 characters.
  */
 export function validateDomain(domain: string): boolean {
-  const domainRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  return domainRegex.test(domain) && domain.length <= 253;
+  return domain.length <= 253 && LDH_NAME.test(domain);
 }
 
-/**
- * Validates a hostname
- */
+/** Whether the name is a syntactically valid host name (RFC 952, RFC 1123). */
 export function validateHostname(hostname: string): boolean {
-  const hostnameRegex = /^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/;
-  return hostnameRegex.test(hostname) && hostname.length <= 253;
+  return validateDomain(hostname);
 }
 
-/**
- * Validates a contact ID
- */
+/** Whether the ID fits the EPP client identifier type: 3-16 characters, no whitespace. */
 export function validateContactId(contactId: string): boolean {
-  const contactIdRegex = /^[A-Z0-9_-]+$/i;
-  return contactIdRegex.test(contactId) && contactId.length <= 16;
+  return /^\S{3,16}$/.test(contactId);
 }
 
-/**
- * Validates an IPv4 address
- */
 export function validateIPv4(ip: string): boolean {
-  const ipv4Regex = /^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
-  return ipv4Regex.test(ip);
+  return isIPv4(ip);
 }
 
-/**
- * Validates an IPv6 address
- */
 export function validateIPv6(ip: string): boolean {
-  const ipv6Regex = /^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$|^::1$|^([0-9a-fA-F]{1,4}:){1,7}:$|^([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}$|^([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}$|^([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}$|^([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}$|^([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}$|^[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})$|^:((:[0-9a-fA-F]{1,4}){1,7}|:)$/;
-  return ipv6Regex.test(ip);
+  return isIPv6(ip);
 }
 
-/**
- * Validates a phone number in EPP format
- */
+/** Whether the number has the EPP E.164 format "+CC.NUMBER" (RFC 5733 Section 2.5). */
 export function validatePhone(phone: string): boolean {
-  const phoneRegex = /^\+\d{1,3}\.\d{1,14}(x\d{1,6})?$/;
-  return phoneRegex.test(phone);
+  return phone.length <= 17 && /^\+\d{1,3}\.\d{1,14}$/.test(phone);
 }
 
-/**
- * Formats a phone number to EPP format
- */
-export function formatPhone(phone: string): string {
-  // Remove all non-digit characters except + and x
-  let formatted = phone.replace(/[^\d+x]/gi, '');
-  
-  // If it doesn't start with +, add default +1. for US numbers
-  if (!formatted.startsWith('+')) {
-    formatted = '+1.' + formatted;
-  } else {
-    // Replace + with + and insert . after country code
-    const countryCode = formatted.match(/^\+\d+/)?.[0] || '+1';
-    const rest = formatted.slice(countryCode.length);
-    formatted = countryCode + '.' + rest;
-  }
-  
-  return formatted;
-}
-
-/**
- * Normalizes domain name (lowercase, remove www, etc.)
- */
-export function normalizeDomain(domain: string): string {
-  return domain.toLowerCase().replace(/^www\./, '').trim();
-}
-
-/**
- * Generates a random password
- */
-export function generatePassword(length: number = 16): string {
-  const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
-  let password = '';
-  
-  for (let i = 0; i < length; i++) {
-    const randomIndex = Math.floor(Math.random() * charset.length);
-    password += charset[randomIndex];
-  }
-  
-  return password;
-}
-
-/**
- * Converts object to XML attributes format
- */
-export function objectToAttributes(obj: Record<string, any>): Record<string, any> {
-  const attributes: Record<string, any> = {};
-  
-  for (const [key, value] of Object.entries(obj)) {
-    attributes['$'] = attributes['$'] || {};
-    attributes['$'][key] = value;
-  }
-  
-  return attributes;
-}
-
-/**
- * Sleep function for delays
- */
-export function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Retry function with exponential backoff
- */
-export async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  maxRetries: number = 3,
-  baseDelay: number = 1000
-): Promise<T> {
-  let lastError: Error;
-  
-  for (let attempt = 0; attempt < maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error as Error;
-      
-      if (attempt < maxRetries - 1) {
-        const delay = baseDelay * Math.pow(2, attempt);
-        await sleep(delay);
-      }
-    }
-  }
-  
-  throw lastError!;
-}
-
-/**
- * Deep clone an object
- */
-export function deepClone<T>(obj: T): T {
-  if (obj === null || typeof obj !== 'object') {
-    return obj;
-  }
-  
-  if (obj instanceof Date) {
-    return new Date(obj.getTime()) as unknown as T;
-  }
-  
-  if (obj instanceof Array) {
-    return obj.map(item => deepClone(item)) as unknown as T;
-  }
-  
-  if (typeof obj === 'object') {
-    const cloned = {} as T;
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key)) {
-        cloned[key] = deepClone(obj[key]);
-      }
-    }
-    return cloned;
-  }
-  
-  return obj;
-}
-
-/**
- * Merge objects deeply
- */
-export function deepMerge<T extends Record<string, any>>(target: T, source: Partial<T>): T {
-  const result = deepClone(target);
-  
-  for (const key in source) {
-    if (source.hasOwnProperty(key)) {
-      const sourceValue = source[key];
-      const targetValue = result[key];
-      
-      if (sourceValue !== undefined && isObject(sourceValue) && isObject(targetValue)) {
-        result[key] = deepMerge(targetValue, sourceValue as any);
-      } else if (sourceValue !== undefined) {
-        result[key] = deepClone(sourceValue) as any;
-      }
-    }
-  }
-  
-  return result;
-}
-
-/**
- * Check if value is an object
- */
-export function isObject(value: any): boolean {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-/**
- * Convert string to boolean based on EPP conventions
- */
-export function eppStringToBoolean(value: string): boolean {
-  return value === '1' || value === 'true' || value === 'yes';
-}
-
-/**
- * Convert boolean to EPP string format
- */
-export function booleanToEppString(value: boolean): string {
-  return value ? '1' : '0';
-}
-
-/**
- * Validate country code (ISO 3166-1 alpha-2)
- */
 export function validateCountryCode(code: string): boolean {
-  const countryCodeRegex = /^[A-Z]{2}$/;
-  return countryCodeRegex.test(code);
+  return /^[A-Z]{2}$/.test(code);
 }
 
-/**
- * Validate currency code (ISO 4217)
- */
 export function validateCurrencyCode(code: string): boolean {
-  const currencyCodeRegex = /^[A-Z]{3}$/;
-  return currencyCodeRegex.test(code);
+  return /^[A-Z]{3}$/.test(code);
 }
 
-/**
- * Format date to EPP format (YYYY-MM-DD)
- */
-export function formatEppDate(date: Date): string {
-  return date.toISOString().split('T')[0];
-}
-
-/**
- * Parse EPP date string to Date object
- */
-export function parseEppDate(dateString: string): Date {
-  return new Date(dateString + 'T00:00:00Z');
-}
-
-/**
- * Escape XML special characters
- */
-export function escapeXml(unsafe: string): string {
-  return unsafe.replace(/[<>&'"]/g, (c) => {
-    switch (c) {
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '&': return '&amp;';
-      case '\'': return '&apos;';
-      case '"': return '&quot;';
-      default: return c;
-    }
-  });
-}
-
-/**
- * Unescape XML special characters
- */
-export function unescapeXml(safe: string): string {
-  return safe.replace(/&lt;/g, '<')
-            .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&')
-            .replace(/&apos;/g, '\'')
-            .replace(/&quot;/g, '"');
-}
-
-/**
- * Generate a unique transaction ID
- */
-export function generateTransactionId(prefix: string = 'CLTRID'): string {
-  const timestamp = Date.now();
-  const random = Math.random().toString(36).substring(2, 10);
-  return `${prefix}-${timestamp}-${random}`;
-}
-
-/**
- * Validate transaction ID format
- */
+/** Whether the value is a valid client transaction ID: 3-64 characters, no whitespace (RFC 5730). */
 export function validateTransactionId(trid: string): boolean {
-  const tridRegex = /^[A-Z0-9]+-\d+-[A-Z0-9]+$/i;
-  return tridRegex.test(trid);
+  return /^\S{3,64}$/.test(trid);
 }
 
 /**
- * Check if response code indicates success
+ * Convert a domain name to its A-label (ASCII) form, as registries expect
+ * for IDNs. "bücher.example" becomes "xn--bcher-kva.example".
+ *
+ * @throws {EppValidationError} when the name cannot be converted.
  */
+export function toAsciiDomain(domain: string): string {
+  const ascii = domainToASCII(domain.trim());
+  if (!ascii) throw new EppValidationError(`Not a valid domain name: ${JSON.stringify(domain)}`);
+  return ascii;
+}
+
+/** Convert a domain name's A-labels to Unicode U-labels. */
+export function toUnicodeDomain(domain: string): string {
+  return domainToUnicode(domain.trim()) || domain;
+}
+
+/** Lowercase A-label form without surrounding whitespace or a trailing dot. */
+export function normalizeDomain(domain: string): string {
+  return toAsciiDomain(domain.trim().replace(/\.$/, '')).toLowerCase();
+}
+
+const UPPER = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const LOWER = 'abcdefghijklmnopqrstuvwxyz';
+const DIGITS = '0123456789';
+const SYMBOLS = '!@#$%^&*';
+
+/**
+ * Generate a random authorization code with a cryptographically secure
+ * generator, containing at least one uppercase letter, lowercase letter,
+ * digit and symbol. 16 characters fit most registry limits; use more where
+ * the registry allows (RFC 9154 recommends 128 bits of entropy).
+ */
+export function generateAuthInfo(length = 16): string {
+  if (!Number.isInteger(length) || length < 8) throw new EppValidationError('Authorization codes must be at least 8 characters');
+  const all = UPPER + LOWER + DIGITS + SYMBOLS;
+  const chars = [UPPER, LOWER, DIGITS, SYMBOLS].map((set) => set[randomInt(set.length)]);
+  while (chars.length < length) chars.push(all[randomInt(all.length)]);
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = randomInt(i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
+
+/** @deprecated Use {@link generateAuthInfo}. */
+export const generatePassword = generateAuthInfo;
+
+/** Format a Date as an EPP date (YYYY-MM-DD, UTC). */
+export function formatEppDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+/** Parse an EPP date (YYYY-MM-DD) as midnight UTC. */
+export function parseEppDate(dateString: string): Date {
+  return new Date(`${dateString}T00:00:00Z`);
+}
+
 export function isEppSuccessCode(code: number): boolean {
   return code >= 1000 && code < 2000;
 }
 
-/**
- * Check if response code indicates command error
- */
 export function isEppErrorCode(code: number): boolean {
   return code >= 2000 && code < 3000;
 }
 
 /**
- * Get EPP response code category
+ * Category of a result code, from its second digit (RFC 5730 Section 3):
+ * protocol syntax, implementation-specific rules, security, data
+ * management, server system, or connection management.
  */
-export function getEppCodeCategory(code: number): string {
-  if (code >= 1000 && code < 2000) return 'success';
-  if (code >= 2000 && code < 3000) return 'error';
-  if (code >= 3000 && code < 4000) return 'pending';
-  if (code >= 4000 && code < 5000) return 'security';
-  return 'unknown';
+export function getEppCodeCategory(
+  code: number,
+):
+  | 'protocolSyntax'
+  | 'implementationSpecific'
+  | 'security'
+  | 'dataManagement'
+  | 'serverSystem'
+  | 'connectionManagement'
+  | 'unknown' {
+  if (code < 1000 || code >= 3000) return 'unknown';
+  const categories = ['protocolSyntax', 'implementationSpecific', 'security', 'dataManagement', 'serverSystem', 'connectionManagement'] as const;
+  return categories[Math.floor((code % 1000) / 100)] ?? 'unknown';
 }
 
-/**
- * Common EPP status values
- */
+/** Status values of the domain, host and contact mappings (RFC 5731-5733). */
 export const EppStatus = {
   OK: 'ok',
-  LOCKED: 'clientLock',
-  SERVER_LOCKED: 'serverLock',
+  INACTIVE: 'inactive',
+  LINKED: 'linked',
+  CLIENT_DELETE_PROHIBITED: 'clientDeleteProhibited',
+  CLIENT_HOLD: 'clientHold',
+  CLIENT_RENEW_PROHIBITED: 'clientRenewProhibited',
+  CLIENT_TRANSFER_PROHIBITED: 'clientTransferProhibited',
+  CLIENT_UPDATE_PROHIBITED: 'clientUpdateProhibited',
   PENDING_CREATE: 'pendingCreate',
   PENDING_DELETE: 'pendingDelete',
+  PENDING_RENEW: 'pendingRenew',
   PENDING_TRANSFER: 'pendingTransfer',
   PENDING_UPDATE: 'pendingUpdate',
-  LINKED: 'linked',
-  DELETE_PROHIBITED: 'deleteProhibited',
-  TRANSFER_PROHIBITED: 'transferProhibited',
-  UPDATE_PROHIBITED: 'updateProhibited',
+  SERVER_DELETE_PROHIBITED: 'serverDeleteProhibited',
+  SERVER_HOLD: 'serverHold',
+  SERVER_RENEW_PROHIBITED: 'serverRenewProhibited',
+  SERVER_TRANSFER_PROHIBITED: 'serverTransferProhibited',
+  SERVER_UPDATE_PROHIBITED: 'serverUpdateProhibited',
 } as const;
 
-/**
- * Common EPP result codes
- */
+/** EPP result codes (RFC 5730 Section 3). */
 export const EppResultCode = {
   SUCCESS: 1000,
   SUCCESS_ACTION_PENDING: 1001,
@@ -375,81 +203,44 @@ export const EppResultCode = {
   SESSION_LIMIT_EXCEEDED_SERVER_CLOSING: 2502,
 } as const;
 
-/**
- * Get descriptive message for EPP result code
- */
-export function getEppResultMessage(code: number): string {
-  const messages: Record<number, string> = {
-    1000: 'Command completed successfully',
-    1001: 'Command completed successfully; action pending',
-    1300: 'Command completed successfully; no messages',
-    1301: 'Command completed successfully; ack to dequeue',
-    1500: 'Command completed successfully; ending session',
-    2000: 'Unknown command',
-    2001: 'Command syntax error',
-    2002: 'Command use error',
-    2003: 'Required parameter missing',
-    2004: 'Parameter value range error',
-    2005: 'Parameter value syntax error',
-    2100: 'Unimplemented protocol version',
-    2101: 'Unimplemented command',
-    2102: 'Unimplemented option',
-    2103: 'Unimplemented extension',
-    2104: 'Billing failure',
-    2105: 'Object is not eligible for renewal',
-    2106: 'Object is not eligible for transfer',
-    2200: 'Authentication error',
-    2201: 'Authorization error',
-    2202: 'Invalid authorization information',
-    2300: 'Object pending transfer',
-    2301: 'Object not pending transfer',
-    2302: 'Object exists',
-    2303: 'Object does not exist',
-    2304: 'Object status prohibits operation',
-    2305: 'Object association prohibits operation',
-    2306: 'Parameter value policy error',
-    2307: 'Unimplemented object service',
-    2308: 'Data management policy violation',
-    2400: 'Command failed',
-    2500: 'Command failed; server closing connection',
-    2501: 'Authentication error; server closing connection',
-    2502: 'Session limit exceeded; server closing connection',
-  };
-
-  return messages[code] || `Unknown result code: ${code}`;
-}
-
-export default {
-  validateEmail,
-  validateDomain,
-  validateHostname,
-  validateContactId,
-  validateIPv4,
-  validateIPv6,
-  validatePhone,
-  formatPhone,
-  normalizeDomain,
-  generatePassword,
-  objectToAttributes,
-  sleep,
-  retryWithBackoff,
-  deepClone,
-  deepMerge,
-  isObject,
-  eppStringToBoolean,
-  booleanToEppString,
-  validateCountryCode,
-  validateCurrencyCode,
-  formatEppDate,
-  parseEppDate,
-  escapeXml,
-  unescapeXml,
-  generateTransactionId,
-  validateTransactionId,
-  isEppSuccessCode,
-  isEppErrorCode,
-  getEppCodeCategory,
-  EppStatus,
-  EppResultCode,
-  getEppResultMessage,
+const RESULT_MESSAGES: Record<number, string> = {
+  1000: 'Command completed successfully',
+  1001: 'Command completed successfully; action pending',
+  1300: 'Command completed successfully; no messages',
+  1301: 'Command completed successfully; ack to dequeue',
+  1500: 'Command completed successfully; ending session',
+  2000: 'Unknown command',
+  2001: 'Command syntax error',
+  2002: 'Command use error',
+  2003: 'Required parameter missing',
+  2004: 'Parameter value range error',
+  2005: 'Parameter value syntax error',
+  2100: 'Unimplemented protocol version',
+  2101: 'Unimplemented command',
+  2102: 'Unimplemented option',
+  2103: 'Unimplemented extension',
+  2104: 'Billing failure',
+  2105: 'Object is not eligible for renewal',
+  2106: 'Object is not eligible for transfer',
+  2200: 'Authentication error',
+  2201: 'Authorization error',
+  2202: 'Invalid authorization information',
+  2300: 'Object pending transfer',
+  2301: 'Object not pending transfer',
+  2302: 'Object exists',
+  2303: 'Object does not exist',
+  2304: 'Object status prohibits operation',
+  2305: 'Object association prohibits operation',
+  2306: 'Parameter value policy error',
+  2307: 'Unimplemented object service',
+  2308: 'Data management policy violation',
+  2400: 'Command failed',
+  2500: 'Command failed; server closing connection',
+  2501: 'Authentication error; server closing connection',
+  2502: 'Session limit exceeded; server closing connection',
 };
+
+/** The standard message of a result code (RFC 5730 Section 3). */
+export function getEppResultMessage(code: number): string {
+  return RESULT_MESSAGES[code] ?? 'Unknown result code';
+}

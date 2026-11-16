@@ -1,463 +1,333 @@
 /**
- * EPP Extensions Example
- * 
- * Contoh penggunaan EPP Extensions:
- * - Launch Extension (RFC 8334)
- * - TMCH Extension
- * - Fee Extension (RFC 8748)
- * - RGP Extension (RFC 3915)
- * 
- * Note: This is a demonstration file showing type usage.
- * Actual EPP client integration would require additional implementation.
+ * ICANN gTLD workflows built on EPP extensions:
+ *
+ *   fee           Registry Fee (RFC 8748): price check, premium registration
+ *   claims        Launch Phase (RFC 8334) claims check, registration with a TMCH notice
+ *   sunrise       Launch Phase sunrise registration with a signed mark (RFC 7848, RFC 9361)
+ *   restore       Registry Grace Period (RFC 3915) restore request and report
+ *   registry-ext  A registry-specific extension built with el()
+ *
+ * fee, claims and registry-ext only read unless you pass the arguments for a
+ * create. Use your registry's OT&E environment.
  */
 
+import { readFileSync } from 'fs';
 import {
-  // Launch Extension
-  LaunchPhase,
-  LaunchCreateRequest,
-  SignedMarkData,
-  LaunchNotice,
-  LAUNCH_NAMESPACE,
-  isValidLaunchPhase,
-  
-  // TMCH Extension
-  TmchMark,
-  TmchSMD,
-  TmchClaimsNotice,
-  TMCH_NAMESPACE,
-  isValidSMDFormat,
-  isTmchMarkExpired,
-  isValidNiceClass,
-  
-  // Fee Extension
-  Fee,
-  FeeCommand,
-  FEE_NAMESPACE,
-  isValidCurrencyCode,
   calculateTotalFees,
-  formatFeeAmount,
-  
-  // RGP Extension
-  RgpStatus,
-  RgpUpdateRequest,
-  RgpRestoreReport,
-  RGP_NAMESPACE,
-  isInRedemption,
   canRestore,
+  el,
+  EppClient,
+  EppValidationError,
+  extractEncodedSmd,
+  formatFeeAmount,
+  generateAuthInfo,
+  NS,
+  parseSmdFile,
+  serializeXml,
+  toUnicodeDomain,
   validateRestoreReport,
-  getRemainingGracePeriodDays,
-  calculateGracePeriodEnd
-} from '../src/types';
+  verifyTcnId,
+} from '../src';
+import type { DomainCreateRequest, DomainInfo, EppConfig, LaunchNotice, RgpRestoreReport, SmdFile } from '../src';
+import { exitWithUsage, requireExtension, run, Scenario } from './config';
+
+const USAGE = `Usage: npm run example:extensions -- <scenario> [arguments]
+
+  fee [domain] [contactId]                 Price check (default); registers at the quoted price when a contact is given
+  claims [domain] [contactId noticeID notAfter [acceptedDate]]
+                                           Claims check; registers with the accepted notice when its details are given
+  sunrise <smd-file> <domain> <contactId>  Sunrise registration with a TMCH signed mark
+  restore <domain> [delTime]               Restore a deleted domain from its redemption period
+  registry-ext [domain]                    Domain check with a registry-specific extension`;
+
+/** Namespace of a registry-specific extension. Replace it and the elements below with your registry's. */
+const REGISTRY_EXT_URI = 'urn:example:params:xml:ns:regext-1.0';
+
+/** The registrant and contacts of the creates below: one contact in every role. */
+function holder(contactId: string): Pick<DomainCreateRequest, 'registrant' | 'contacts'> {
+  return {
+    registrant: contactId,
+    contacts: [
+      { type: 'admin', id: contactId },
+      { type: 'tech', id: contactId },
+    ],
+  };
+}
+
+// ============================================================================
+// Registry Fee extension (RFC 8748)
+// ============================================================================
 
 /**
- * =================================================================
- * LAUNCH EXTENSION EXAMPLES (RFC 8334)
- * =================================================================
+ * Price several commands in one check (RFC 8748 Section 5.1.1), then
+ * register at the quoted price. A premium name has a non-standard price,
+ * and servers refuse to create it unless the create carries the fee the
+ * client agrees to pay (RFC 8748 Section 5.2.1).
  */
-
-/**
- * Example 1: Sunrise Registration dengan SMD
- */
-function sunriseRegistrationExample() {
-  console.log('=== Sunrise Registration ===');
-  
-  // Validate phase
-  if (!isValidLaunchPhase('sunrise')) {
-    console.error('Invalid launch phase');
+async function fee(client: EppClient, domain: string, contactId?: string): Promise<void> {
+  requireExtension(client, NS.fee, 'Registry Fee (RFC 8748)');
+  const { data: quote } = await client.feeCheck({ domain, command: ['create', 'renew', 'transfer', 'restore'], period: 1 });
+  const item = quote?.items[0];
+  if (!quote || !item) throw new Error('The server returned no fee data');
+  console.log(`${item.objID}${item.class ? ` (class "${item.class}")` : ''}, prices in ${quote.currency}:`);
+  if (!item.available) {
+    console.log(`  cannot be priced: ${item.reason ?? 'no reason given'}`);
     return;
   }
-  
-  // SMD dari TMCH
-  const smd: SignedMarkData = {
-    encodedSignedMark: 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4...'
-  };
-  
-  const launchCreate: LaunchCreateRequest = {
-    phase: { name: 'sunrise' },
-    signedMark: smd,
-    type: 'application'
-  };
-  
-  console.log('Launch phase:', launchCreate.phase.name);
-  console.log('Type:', launchCreate.type);
-  console.log('✓ Sunrise registration request prepared');
-}
+  for (const command of item.commands) {
+    const period = command.period ? ` ${command.period.value}${command.period.unit}` : '';
+    const premium = command.standard ? '' : ' (premium)';
+    console.log(`  ${command.name}${period}: ${formatFeeAmount(calculateTotalFees(command.fees))}${premium}`);
+    for (const part of command.fees) console.log(`    ${part.fee}${part.description ? ` ${part.description}` : ''}`);
+  }
 
-/**
- * Example 2: Claims Registration dengan Notice
- */
-function claimsRegistrationExample() {
-  console.log('\n=== Claims Registration ===');
-  
-  // Claims notice dari TMCH
-  const notice: LaunchNotice = {
-    noticeID: 'claim-notice-12345',
-    notAfter: '2024-12-31T23:59:59Z',
-    acceptedDate: '2024-01-15T10:30:00Z'
-  };
-  
-  const launchCreate: LaunchCreateRequest = {
-    phase: { name: 'claims' },
-    notice: notice
-  };
-  
-  console.log('Notice ID:', notice.noticeID);
-  console.log('Expires:', notice.notAfter);
-  console.log('✓ Claims registration request prepared');
-}
-
-/**
- * Example 3: Landrush Registration
- */
-function landrushRegistrationExample() {
-  console.log('\n=== Landrush Registration ===');
-  
-  const launchCreate: LaunchCreateRequest = {
-    phase: { name: 'landrush' },
-    type: 'registration'
-  };
-  
-  console.log('Phase:', launchCreate.phase.name);
-  console.log('✓ Landrush registration request prepared');
-}
-
-/**
- * =================================================================
- * TMCH EXTENSION EXAMPLES
- * =================================================================
- */
-
-/**
- * Example 4: Validate TMCH SMD
- */
-function validateTmchSmdExample() {
-  console.log('\n=== TMCH SMD Validation ===');
-  
-  const smd: TmchSMD = {
-    id: '20240115-000001-0001',
-    issuer: 'TMCH',
-    encodedSignedMark: 'base64_encoded_smd...',
-    notBefore: '2024-01-15T00:00:00Z',
-    notAfter: '2030-01-15T00:00:00Z'
-  };
-  
-  // Validate format
-  if (!isValidSMDFormat(smd.id)) {
-    console.error('❌ Invalid SMD format');
+  if (!contactId) {
+    console.log('\nPass a contact ID to register the domain at this price.');
     return;
   }
-  console.log('✓ Valid SMD format:', smd.id);
-  
-  // Check expiration
-  if (isTmchMarkExpired(smd.notAfter)) {
-    console.error('❌ SMD has expired');
-    return;
-  }
-  console.log('✓ SMD not expired');
-}
-
-/**
- * Example 5: Process TMCH Claims Notice
- */
-function processTmchClaimsNoticeExample() {
-  console.log('\n=== TMCH Claims Notice Processing ===');
-  
-  const claimsNotice: TmchClaimsNotice = {
-    id: '2024-01-15T10:30:45.123Z-abc12345',
-    notAfter: '2024-12-31T23:59:59Z',
-    acceptedDate: '2024-01-15T10:00:00Z',
-    label: 'example',
-    claims: [
-      {
-        markName: 'EXAMPLE',
-        jurisdiction: 'US',
-        goodsAndServices: 'Class 35: Advertising services'
-      }
-    ]
-  };
-  
-  console.log('Notice ID:', claimsNotice.id);
-  console.log('Expires:', claimsNotice.notAfter);
-  console.log('Claims:', claimsNotice.claims?.length || 0);
-  
-  claimsNotice.claims?.forEach((claim, index) => {
-    console.log(`  Claim ${index + 1}: ${claim.markName} (${claim.jurisdiction})`);
+  const create = item.commands.find((command) => command.name === 'create');
+  if (!create) throw new Error('The server did not price the create command');
+  const created = await client.domainCreate({
+    name: domain,
+    period: 1,
+    ...holder(contactId),
+    authInfo: { pw: generateAuthInfo() },
+    fee: { currency: quote.currency, amount: formatFeeAmount(calculateTotalFees(create.fees)) },
   });
-  
-  console.log('✓ Claims notice processed');
+  console.log(`\nCreated ${created.data?.name ?? domain}: ${created.code} ${created.message}`);
+  // What the server charged, and the account balance, when it reports them (fee:creData).
+  const charged = created.extensions.fee;
+  if (charged) {
+    const balance = charged.balance ? `; balance ${charged.balance}` : '';
+    console.log(`  charged ${formatFeeAmount(calculateTotalFees(charged.fees))} ${charged.currency ?? quote.currency}${balance}`);
+  }
+}
+
+// ============================================================================
+// Trademark claims (RFC 8334, RFC 9361)
+// ============================================================================
+
+/**
+ * During a claims period, registering a name that matches a mark in the
+ * Trademark Clearinghouse (TMCH) requires the registrant to accept a claims
+ * notice first. The claims check (RFC 8334 Section 3.1.1) returns the claim
+ * key; fetch the notice from the TMCH with it, show it to the registrant,
+ * and record when they accepted it.
+ */
+async function claims(client: EppClient, domain: string, contactId?: string, notice?: LaunchNotice): Promise<void> {
+  requireExtension(client, NS.launch, 'Launch Phase (RFC 8334)');
+  const { extensions } = await client.domainCheck(domain, { launch: { type: 'claims', phase: 'claims' } });
+  const result = extensions.launchCheck?.results.find((r) => r.name.toLowerCase() === domain.toLowerCase());
+  if (!result?.exists) {
+    console.log(`${domain}: no trademark claim; register it without a notice`);
+    return;
+  }
+  console.log(`${domain}: a trademark claim exists`);
+  for (const claimKey of result.claimKeys) {
+    console.log(`  claim key ${claimKey.key} (validator ${claimKey.validatorID ?? 'tmch'})`);
+  }
+  if (!contactId || !notice) {
+    console.log('\nPass contactId, noticeID, notAfter (and acceptedDate) of the accepted notice to register the name.');
+    return;
+  }
+
+  // Registries check that the notice ID (TCNID) matches the label and the
+  // notice expiry, and reject expired notices; check both before sending.
+  if (!verifyTcnId(notice.noticeID, domain, notice.notAfter)) {
+    throw new EppValidationError(`Notice ${notice.noticeID} does not belong to ${domain} with expiry ${String(notice.notAfter)}`);
+  }
+  if (new Date(notice.notAfter).getTime() < Date.now()) {
+    throw new EppValidationError('The claims notice has expired; fetch a new one from the TMCH');
+  }
+  const created = await client.domainCreate({
+    name: domain,
+    period: 1,
+    ...holder(contactId),
+    authInfo: { pw: generateAuthInfo() },
+    launch: { phase: 'claims', notice },
+  });
+  console.log(`Created ${created.data?.name ?? domain}: ${created.code} ${created.message}`);
+}
+
+// ============================================================================
+// Sunrise (RFC 8334, RFC 7848, RFC 9361)
+// ============================================================================
+
+/**
+ * Read a TMCH Signed Mark Data file. Complete files start with header lines
+ * (Marks, smdID, U-labels, notBefore, notAfter) before the encoded block;
+ * files holding only the encoded block have nothing else to check.
+ */
+function readSmd(path: string): { encodedSignedMark: string; header?: SmdFile } {
+  const content = readFileSync(path, 'utf8');
+  if (!/^\s*smdID:/m.test(content)) return { encodedSignedMark: extractEncodedSmd(content) };
+  const header = parseSmdFile(content);
+  return { encodedSignedMark: header.encodedSignedMark, header };
 }
 
 /**
- * Example 6: Validate Nice Classification
+ * Trademark holders register before general availability by presenting the
+ * signed mark from their SMD file (RFC 8334 Section 3.3).
  */
-function validateNiceClassExample() {
-  console.log('\n=== Nice Classification Validation ===');
-  
-  const classes = [35, 42, 100]; // 100 is invalid
-  
-  classes.forEach(cls => {
-    if (isValidNiceClass(cls)) {
-      console.log(`✓ Class ${cls} is valid`);
-    } else {
-      console.log(`❌ Class ${cls} is invalid (valid: 1-45)`);
+async function sunrise(client: EppClient, smdPath: string, domain: string, contactId: string): Promise<void> {
+  requireExtension(client, NS.launch, 'Launch Phase (RFC 8334)');
+  const { encodedSignedMark, header } = readSmd(smdPath);
+  if (header) {
+    console.log(`SMD ${header.smdID}: ${header.marks}`);
+    console.log(`  labels ${header.uLabels.join(', ')}; valid from ${header.notBefore} to ${header.notAfter}`);
+    const label = toUnicodeDomain(domain).split('.')[0];
+    if (!header.uLabels.includes(label)) throw new EppValidationError(`The SMD does not cover the label "${label}"`);
+    const now = Date.now();
+    if (now < Date.parse(header.notBefore) || now > Date.parse(header.notAfter)) {
+      throw new EppValidationError('The SMD is not valid at this time');
     }
+  }
+  const res = await client.domainCreate({
+    name: domain,
+    period: 1,
+    ...holder(contactId),
+    authInfo: { pw: generateAuthInfo() },
+    // Add type: 'application' or 'registration' if the registry asks for one.
+    launch: { phase: 'sunrise', encodedSignedMark },
   });
+  // 1001 usually means an application that awaits validation or allocation.
+  console.log(`Sunrise create: ${res.code} ${res.message}`);
+  const application = res.extensions.launchCreate;
+  if (application?.applicationID) console.log(`  application ${application.applicationID} (phase ${application.phase})`);
+}
+
+// ============================================================================
+// Registry Grace Period restore (RFC 3915)
+// ============================================================================
+
+/** A plain-text copy of the registration data, for the restore report. */
+function registrationData(domain: string, info: DomainInfo | undefined): string {
+  if (!info) return `Domain: ${domain}`;
+  return [
+    `Domain: ${info.name}`,
+    `Registrant: ${info.registrant ?? '-'}`,
+    ...info.contacts.map((contact) => `Contact (${contact.type}): ${contact.id}`),
+    `Name servers: ${info.ns?.hostObj?.join(', ') ?? '-'}`,
+    `Expires: ${info.exDate ?? '-'}`,
+  ].join('\n');
 }
 
 /**
- * =================================================================
- * FEE EXTENSION EXAMPLES (RFC 8748)
- * =================================================================
+ * A deleted domain spends a redemption period before it is purged. The
+ * sponsoring registrar restores it with a restore request, then a restore
+ * report while the domain is pendingRestore (RFC 3915 Section 4.2.5).
+ * Registries that charge for restores may also want `fee` in both calls.
  */
-
-/**
- * Example 7: Check Domain Fees
- */
-function checkDomainFeesExample() {
-  console.log('\n=== Domain Fees Check ===');
-  
-  // Validate currency
-  if (!isValidCurrencyCode('USD')) {
-    console.error('Invalid currency code');
+async function restore(client: EppClient, domain: string, delTime?: string): Promise<void> {
+  requireExtension(client, NS.rgp, 'Registry Grace Period (RFC 3915)');
+  const { data: info, extensions } = await client.domainInfo(domain);
+  const statuses = extensions.rgp?.rgpStatus.map((status) => status.s) ?? [];
+  console.log(`${domain}: RGP status ${statuses.join(', ') || 'none'}`);
+  if (!statuses.some(canRestore)) {
+    console.log('Only a domain in redemptionPeriod can be restored');
     return;
   }
-  
-  const fees: Fee[] = [
-    { fee: '10.00', description: 'Registration' },
-    { fee: '0.18', description: 'ICANN Fee' },
-    { fee: '5.00', description: 'Setup Fee', refundable: true, gracePeriod: 'P5D' }
-  ];
-  
-  const total = calculateTotalFees(fees);
-  
-  console.log('Fee breakdown:');
-  fees.forEach(fee => {
-    const refundable = fee.refundable ? ' (refundable)' : '';
-    console.log(`  - ${fee.description}: $${fee.fee}${refundable}`);
-  });
-  
-  console.log(`Total: $${formatFeeAmount(total)} USD`);
-  console.log('✓ Fees calculated');
-}
+  // The registrar's own record of the delete is best; upDate is usually the delete.
+  const deleted = delTime ?? info?.upDate;
+  if (!deleted) throw new EppValidationError('Pass the deletion time (delTime): the server did not return upDate');
 
-/**
- * Example 8: Multi-Currency Fees
- */
-function multiCurrencyExample() {
-  console.log('\n=== Multi-Currency Fees ===');
-  
-  const currencies = ['USD', 'EUR', 'GBP', 'JPY'];
-  
-  currencies.forEach(currency => {
-    if (isValidCurrencyCode(currency)) {
-      console.log(`✓ ${currency} is valid currency`);
-    } else {
-      console.log(`❌ ${currency} is invalid currency`);
-    }
-  });
-}
+  // 1. Restore request.
+  const requested = await client.domainRestore(domain);
+  const rgpNow = requested.extensions.rgp?.rgpStatus.map((status) => status.s).join(', ');
+  console.log(`Restore requested: ${requested.code} ${requested.message}${rgpNow ? `; RGP status ${rgpNow}` : ''}`);
 
-/**
- * =================================================================
- * RGP EXTENSION EXAMPLES (RFC 3915)
- * =================================================================
- */
-
-/**
- * Example 9: Check RGP Status
- */
-function checkRgpStatusExample() {
-  console.log('\n=== RGP Status Check ===');
-  
-  const statuses: RgpStatus[] = [
-    'addPeriod',
-    'redemptionPeriod',
-    'pendingDelete'
-  ];
-  
-  statuses.forEach(status => {
-    console.log(`\nStatus: ${status}`);
-    
-    if (isInRedemption(status)) {
-      console.log('  ⚠️  Domain in redemption period');
-      if (canRestore(status)) {
-        console.log('  ✓ Can be restored');
-      }
-    } else {
-      console.log('  ℹ️  Not in redemption');
-    }
-  });
-}
-
-/**
- * Example 10: Calculate Grace Period
- */
-function calculateGracePeriodExample() {
-  console.log('\n=== Grace Period Calculation ===');
-  
-  const createDate = new Date('2024-01-15T10:00:00Z');
-  const currentDate = new Date('2024-01-17T10:00:00Z');
-  const graceDays = 5;
-  
-  const endDate = calculateGracePeriodEnd(createDate, graceDays);
-  const remaining = getRemainingGracePeriodDays(createDate, currentDate, graceDays);
-  
-  console.log('Created:', createDate.toISOString());
-  console.log('Grace period ends:', endDate.toISOString());
-  console.log('Days remaining:', remaining);
-  console.log('✓ Grace period calculated');
-}
-
-/**
- * Example 11: Validate Restore Report
- */
-function validateRestoreReportExample() {
-  console.log('\n=== Restore Report Validation ===');
-  
+  // 2. Restore report, with the two statements RFC 3915 requires.
+  const data = registrationData(domain, info);
   const report: RgpRestoreReport = {
-    preData: '2024-01-01T00:00:00Z',
-    postData: '2024-01-15T10:00:00Z',
-    delTime: '2024-01-10T00:00:00Z',
-    resTime: '2024-01-12T00:00:00Z',
-    resReason: 'Domain was deleted by mistake. The registrant needs to maintain their online presence.',
+    preData: data,
+    postData: data,
+    delTime: deleted,
+    resTime: new Date(),
+    resReason: 'Registrant error: the domain was deleted by mistake.',
     statement: [
-      {
-        text: 'We have implemented new procedures to prevent similar incidents.',
-        lang: 'en'
-      }
-    ]
+      'This registrar has not restored the Registered Name in order to assume the rights to use or sell the Registered Name for itself or for any third party.',
+      "The information in this report is true to best of this registrar's knowledge, and this registrar acknowledges that intentionally supplying false information in this report shall constitute an incurable material breach of the Registry-Registrar Agreement.",
+    ],
+    other: 'Supporting information, such as the registrant request, goes here.',
   };
-  
+  // The client validates the report too; checking first gives every problem at once.
   const validation = validateRestoreReport(report);
-  
-  if (validation.valid) {
-    console.log('✓ Restore report is valid');
-  } else {
-    console.log('❌ Restore report validation failed:');
-    validation.errors.forEach(error => console.log(`  - ${error}`));
-  }
+  if (!validation.valid) throw new EppValidationError(`Invalid restore report: ${validation.errors.join('; ')}`);
+  const reported = await client.domainRestore(domain, { report });
+  console.log(`Restore report: ${reported.code} ${reported.message}`);
 }
+
+// ============================================================================
+// Registry-specific extension (RFC 5730 Section 2.7.3)
+// ============================================================================
 
 /**
- * =================================================================
- * COMBINED EXAMPLES
- * =================================================================
+ * Commands take extra extension elements in `extensions`, built with el().
+ * Each element must declare its namespace (xmlns:prefix): the client reads
+ * it to check that the URI was announced at login. Response extensions the
+ * client does not interpret arrive as raw XML in `extensions.unknown`.
  */
-
-/**
- * Example 12: Complete Sunrise Registration Workflow
- */
-function completeSunriseWorkflow() {
-  console.log('\n=== Complete Sunrise Registration Workflow ===');
-  
-  // Step 1: Validate SMD
-  console.log('\n1. Validating SMD...');
-  const smdId = '20240115-000001-0001';
-  if (!isValidSMDFormat(smdId)) {
-    console.error('Invalid SMD format');
+async function registryExtension(client: EppClient, domain: string): Promise<void> {
+  const extension = el('regext:check', { 'xmlns:regext': REGISTRY_EXT_URI }, [el('regext:category', null, 'premium')]);
+  console.log(`Extension element: ${serializeXml(extension, { declaration: false })}`);
+  if (!client.getGreeting()?.extURIs.includes(REGISTRY_EXT_URI)) {
+    console.log(`The server does not offer ${REGISTRY_EXT_URI}; use an extension your registry lists in its greeting.`);
     return;
   }
-  console.log('✓ SMD format valid');
-  
-  // Step 2: Check expiration
-  console.log('\n2. Checking expiration...');
-  const expirationDate = '2030-12-31T23:59:59Z';
-  if (isTmchMarkExpired(expirationDate)) {
-    console.error('SMD expired');
-    return;
+  const { data, extensions } = await client.domainCheck(domain, { extensions: [extension] });
+  for (const result of data ?? []) console.log(`  ${result.name}: ${result.available ? 'available' : 'not available'}`);
+  for (const xml of extensions.unknown ?? []) console.log(`  extension data: ${xml}`);
+}
+
+// ============================================================================
+// Command line
+// ============================================================================
+
+function need(value: string | undefined, what: string): string {
+  return value ?? exitWithUsage(USAGE, `Missing ${what}.`);
+}
+
+/** Parse the command line before connecting, so usage errors cost no session. */
+function selectScenario(): { main: Scenario; config?: Partial<EppConfig> } {
+  const [name = 'fee', ...args] = process.argv.slice(2);
+  switch (name) {
+    case 'fee': {
+      const [domain = 'example.tld', contactId] = args;
+      return { main: (client) => fee(client, domain, contactId) };
+    }
+    case 'claims': {
+      const [domain = 'example.tld', contactId, noticeID, notAfter, acceptedDate] = args;
+      if (contactId && (!noticeID || !notAfter)) exitWithUsage(USAGE, 'Registering needs contactId, noticeID and notAfter.');
+      // acceptedDate defaults to now; record the real acceptance time in production.
+      const notice: LaunchNotice | undefined =
+        noticeID && notAfter ? { noticeID, validatorID: 'tmch', notAfter, acceptedDate: acceptedDate ?? new Date() } : undefined;
+      return { main: (client) => claims(client, domain, contactId, notice) };
+    }
+    case 'sunrise': {
+      const [smdPath, domain, contactId] = args;
+      const file = need(smdPath, 'smd-file');
+      const target = need(domain, 'domain');
+      const contact = need(contactId, 'contactId');
+      return { main: (client) => sunrise(client, file, target, contact) };
+    }
+    case 'restore': {
+      const [domain, delTime] = args;
+      const target = need(domain, 'domain');
+      return { main: (client) => restore(client, target, delTime) };
+    }
+    case 'registry-ext': {
+      const [domain = 'example.tld'] = args;
+      return {
+        main: (client) => registryExtension(client, domain),
+        // The URI must be announced at login. additionalExtURIs adds it to the
+        // extensions negotiated from the greeting when the server offers it.
+        config: { additionalExtURIs: [REGISTRY_EXT_URI] },
+      };
+    }
+    default:
+      return exitWithUsage(USAGE, `Unknown scenario "${name}".`);
   }
-  console.log('✓ SMD not expired');
-  
-  // Step 3: Calculate fees
-  console.log('\n3. Calculating fees...');
-  if (!isValidCurrencyCode('USD')) {
-    console.error('Invalid currency');
-    return;
-  }
-  
-  const fees: Fee[] = [
-    { fee: '150.00', description: 'Sunrise Registration' },
-    { fee: '0.18', description: 'ICANN Fee' }
-  ];
-  
-  const total = calculateTotalFees(fees);
-  console.log(`Total: $${formatFeeAmount(total)} USD`);
-  
-  // Step 4: Create launch request
-  console.log('\n4. Preparing launch request...');
-  const launchCreate: LaunchCreateRequest = {
-    phase: { name: 'sunrise' },
-    signedMark: {
-      encodedSignedMark: 'base64_smd_data...'
-    },
-    type: 'application'
-  };
-  
-  console.log('✓ Launch request prepared');
-  
-  // Step 5: Calculate grace periods
-  console.log('\n5. Grace period information:');
-  const createDate = new Date();
-  const addGraceEnd = calculateGracePeriodEnd(createDate, 5);
-  console.log(`Add Grace Period ends: ${addGraceEnd.toISOString()}`);
-  
-  console.log('\n✓ Complete workflow validated successfully');
 }
 
-/**
- * =================================================================
- * MAIN FUNCTION
- * =================================================================
- */
-
-function main() {
-  console.log('='.repeat(60));
-  console.log('EPP EXTENSIONS EXAMPLES');
-  console.log('='.repeat(60));
-  
-  // Launch Extension
-  sunriseRegistrationExample();
-  claimsRegistrationExample();
-  landrushRegistrationExample();
-  
-  // TMCH Extension
-  validateTmchSmdExample();
-  processTmchClaimsNoticeExample();
-  validateNiceClassExample();
-  
-  // Fee Extension
-  checkDomainFeesExample();
-  multiCurrencyExample();
-  
-  // RGP Extension
-  checkRgpStatusExample();
-  calculateGracePeriodExample();
-  validateRestoreReportExample();
-  
-  // Combined Example
-  completeSunriseWorkflow();
-  
-  console.log('\n' + '='.repeat(60));
-  console.log('All examples completed successfully!');
-  console.log('='.repeat(60));
-}
-
-// Run if executed directly
-if (require.main === module) {
-  main();
-}
-
-export {
-  sunriseRegistrationExample,
-  claimsRegistrationExample,
-  landrushRegistrationExample,
-  validateTmchSmdExample,
-  processTmchClaimsNoticeExample,
-  validateNiceClassExample,
-  checkDomainFeesExample,
-  multiCurrencyExample,
-  checkRgpStatusExample,
-  calculateGracePeriodExample,
-  validateRestoreReportExample,
-  completeSunriseWorkflow
-};
+const { main, config } = selectScenario();
+void run(main, config);

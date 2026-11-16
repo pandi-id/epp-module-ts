@@ -1,201 +1,128 @@
 /**
- * Launch Extension Tests (RFC 8334)
+ * Launch Phase extension (RFC 8334): helpers, builders and parsers.
  */
 
+import { EppValidationError } from '../src/core/Errors';
+import { NS } from '../src/core/Namespaces';
 import {
-  LaunchPhase,
-  LaunchStatus,
-  LaunchNotice,
-  SignedMarkData,
-  LaunchCreateRequest,
-  LaunchCheckRequest,
-  TradeMark,
-  isValidLaunchPhase,
-  isValidLaunchStatus,
-  LAUNCH_NAMESPACE
-} from '../src/types/Launch';
+  buildLaunchCheck,
+  buildLaunchCreate,
+  buildLaunchIdContainer,
+  buildLaunchInfo,
+  parseLaunchCheck,
+  parseLaunchCreate,
+  parseLaunchInfo,
+} from '../src/extensions/Launch';
+import { isValidLaunchPhase, isValidLaunchStatus, LAUNCH_NAMESPACE } from '../src/types/Launch';
+import { parseXml } from '../src/xml/XmlReader';
+import { serializeXml } from '../src/xml/XmlWriter';
 
-describe('Launch Extension', () => {
-  describe('Launch Phase Validation', () => {
-    test('should validate valid launch phases', () => {
-      expect(isValidLaunchPhase('sunrise')).toBe(true);
-      expect(isValidLaunchPhase('landrush')).toBe(true);
-      expect(isValidLaunchPhase('claims')).toBe(true);
-      expect(isValidLaunchPhase('open')).toBe(true);
-      expect(isValidLaunchPhase('custom')).toBe(true);
+const xml = (element: Parameters<typeof serializeXml>[0]) => serializeXml(element, { declaration: false });
+
+describe('Launch extension', () => {
+  describe('phase and status helpers', () => {
+    test('accept RFC 8334 phases only', () => {
+      for (const phase of ['sunrise', 'landrush', 'claims', 'open', 'custom']) expect(isValidLaunchPhase(phase)).toBe(true);
+      for (const phase of ['invalid', 'SUNRISE', '']) expect(isValidLaunchPhase(phase)).toBe(false);
     });
 
-    test('should reject invalid launch phases', () => {
-      expect(isValidLaunchPhase('invalid')).toBe(false);
-      expect(isValidLaunchPhase('SUNRISE')).toBe(false);
-      expect(isValidLaunchPhase('')).toBe(false);
-    });
-  });
-
-  describe('Launch Status Validation', () => {
-    test('should validate valid launch statuses', () => {
-      expect(isValidLaunchStatus('pendingValidation')).toBe(true);
-      expect(isValidLaunchStatus('validated')).toBe(true);
-      expect(isValidLaunchStatus('invalid')).toBe(true);
-      expect(isValidLaunchStatus('pendingAllocation')).toBe(true);
-      expect(isValidLaunchStatus('allocated')).toBe(true);
-      expect(isValidLaunchStatus('rejected')).toBe(true);
-      expect(isValidLaunchStatus('custom')).toBe(true);
+    test('accept RFC 8334 statuses only', () => {
+      for (const status of ['pendingValidation', 'validated', 'invalid', 'pendingAllocation', 'allocated', 'rejected', 'custom']) {
+        expect(isValidLaunchStatus(status)).toBe(true);
+      }
+      for (const status of ['unknown', 'VALIDATED', '']) expect(isValidLaunchStatus(status)).toBe(false);
     });
 
-    test('should reject invalid launch statuses', () => {
-      expect(isValidLaunchStatus('unknown')).toBe(false);
-      expect(isValidLaunchStatus('VALIDATED')).toBe(false);
-      expect(isValidLaunchStatus('')).toBe(false);
+    test('namespace', () => {
+      expect(LAUNCH_NAMESPACE).toBe(NS.launch);
     });
   });
 
-  describe('SignedMarkData', () => {
-    test('should create valid SMD structure', () => {
-      const smd: SignedMarkData = {
-        encodedSignedMark: 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4='
-      };
+  describe('check forms (RFC 8334 Section 3.1)', () => {
+    test('claims check defaults to the claims form', () => {
+      expect(xml(buildLaunchCheck({}))).toBe('<launch:check xmlns:launch="urn:ietf:params:xml:ns:launch-1.0" type="claims"/>');
+    });
 
-      expect(smd.encodedSignedMark).toBeDefined();
-      expect(typeof smd.encodedSignedMark).toBe('string');
+    test('availability check needs a phase', () => {
+      expect(xml(buildLaunchCheck({ type: 'avail', phase: 'custom', subPhase: 'idn-release' }))).toContain(
+        '<launch:phase name="idn-release">custom</launch:phase>',
+      );
+      expect(() => buildLaunchCheck({ type: 'avail' })).toThrow(EppValidationError);
+    });
+
+    test('trademark check', () => {
+      expect(xml(buildLaunchCheck({ type: 'trademark' }))).toContain('type="trademark"');
     });
   });
 
-  describe('LaunchNotice', () => {
-    test('should create valid launch notice', () => {
-      const notice: LaunchNotice = {
-        noticeID: 'claim-notice-12345',
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:30:00Z'
-      };
-
-      expect(notice.noticeID).toBe('claim-notice-12345');
-      expect(notice.notAfter).toBe('2024-12-31T23:59:59Z');
-      expect(notice.acceptedDate).toBe('2024-01-15T10:30:00Z');
+  describe('create (RFC 8334 Section 3.3)', () => {
+    test('sunrise with several signed marks', () => {
+      const out = xml(buildLaunchCreate({ phase: 'sunrise', type: 'application', encodedSignedMark: [' AAAA\n', 'BBBB'] }));
+      expect(out).toContain('type="application"');
+      expect(out.match(/<smd:encodedSignedMark /g)).toHaveLength(2);
+      expect(out).toContain('>AAAA</smd:encodedSignedMark>');
     });
 
-    test('should require acceptedDate', () => {
-      const notice: LaunchNotice = {
-        noticeID: 'claim-notice-12345',
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:30:00Z'
-      };
-
-      expect(notice.acceptedDate).toBeDefined();
-    });
-  });
-
-  describe('LaunchCreateRequest', () => {
-    test('should create sunrise registration request', () => {
-      const smd: SignedMarkData = {
-        encodedSignedMark: 'base64_encoded_smd_data'
-      };
-
-      const request: LaunchCreateRequest = {
-        phase: { name: 'sunrise' },
-        signedMark: smd
-      };
-
-      expect(request.phase.name).toBe('sunrise');
-      expect(request.signedMark).toBeDefined();
+    test('claims with several accepted notices', () => {
+      const out = xml(
+        buildLaunchCreate({
+          phase: 'claims',
+          notice: [
+            { noticeID: '370d0b7c9223372036854775807', validatorID: 'tmch', notAfter: '2010-08-16T09:00:00.0Z', acceptedDate: '2009-10-16T09:00:00.0Z' },
+            { noticeID: 'abc123', validatorID: 'custom-tmch', notAfter: new Date('2010-08-16T09:00:00Z'), acceptedDate: new Date('2009-10-16T09:00:00Z') },
+          ],
+        }),
+      );
+      expect(out.match(/<launch:notice>/g)).toHaveLength(2);
+      expect(out).toContain('<launch:notAfter>2010-08-16T09:00:00.000Z</launch:notAfter>');
     });
 
-    test('should create claims registration request', () => {
-      const notice: LaunchNotice = {
-        noticeID: 'claim-12345',
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:30:00Z'
-      };
-
-      const request: LaunchCreateRequest = {
-        phase: { name: 'claims' },
-        notice: notice
-      };
-
-      expect(request.phase.name).toBe('claims');
-      expect(request.notice).toBeDefined();
-    });
-
-    test('should create landrush registration request', () => {
-      const request: LaunchCreateRequest = {
-        phase: { name: 'landrush' },
-        type: 'application'
-      };
-
-      expect(request.phase.name).toBe('landrush');
-      expect(request.type).toBe('application');
-    });
-
-    test('should support custom phase', () => {
-      const request: LaunchCreateRequest = {
-        phase: { name: 'custom', subPhase: 'early-access' },
-        type: 'registration'
-      };
-
-      expect(request.phase.name).toBe('custom');
-      expect(request.phase.subPhase).toBe('early-access');
-      expect(request.type).toBe('registration');
+    test('rejects mixing signed marks and codes, empty marks, and bad dates', () => {
+      expect(() => buildLaunchCreate({ phase: 'sunrise', encodedSignedMark: 'AAAA', codeMark: { code: 'x' } })).toThrow(EppValidationError);
+      expect(() => buildLaunchCreate({ phase: 'sunrise', encodedSignedMark: '  ' })).toThrow(/empty/);
+      expect(() =>
+        buildLaunchCreate({ phase: 'claims', notice: { noticeID: 'x', notAfter: 'soon', acceptedDate: '2009-10-16T09:00:00Z' } }),
+      ).toThrow(/notAfter/);
     });
   });
 
-  describe('LaunchCheckRequest', () => {
-    test('should create launch check request', () => {
-      const request: LaunchCheckRequest = {
-        phase: { name: 'sunrise' },
-        type: 'avail'
-      };
-
-      expect(request.phase.name).toBe('sunrise');
-      expect(request.type).toBe('avail');
+  describe('info, update and delete', () => {
+    test('info with includeMark', () => {
+      expect(xml(buildLaunchInfo({ phase: 'sunrise', applicationID: 'abc123', includeMark: true }))).toBe(
+        '<launch:info xmlns:launch="urn:ietf:params:xml:ns:launch-1.0" includeMark="true"><launch:phase>sunrise</launch:phase><launch:applicationID>abc123</launch:applicationID></launch:info>',
+      );
     });
 
-    test('should support claims check', () => {
-      const request: LaunchCheckRequest = {
-        phase: { name: 'claims' },
-        type: 'claims'
-      };
-
-      expect(request.phase.name).toBe('claims');
-      expect(request.type).toBe('claims');
+    test('update and delete need an application ID', () => {
+      expect(xml(buildLaunchIdContainer('delete', { phase: 'sunrise', applicationID: 'abc123' }))).toContain('<launch:delete');
+      expect(() => buildLaunchIdContainer('update', { phase: 'sunrise', applicationID: '' })).toThrow(EppValidationError);
     });
   });
 
-  describe('TradeMark', () => {
-    test('should create complete trademark structure', () => {
-      const trademark: TradeMark = {
-        name: 'Example Trademark',
-        id: 'mark-12345',
-        issuerInfo: {
-          org: 'USPTO',
-          cc: 'US'
-        },
-        number: '1234567',
-        regDate: '2020-01-15',
-        exDate: '2030-01-15',
-        class: [35, 42],
-        label: ['example']
-      };
-
-      expect(trademark.name).toBe('Example Trademark');
-      expect(trademark.id).toBe('mark-12345');
-      expect(trademark.issuerInfo?.cc).toBe('US');
-      expect(trademark.class).toHaveLength(2);
+  describe('parsers', () => {
+    test('check data without a phase', () => {
+      const node = parseXml(
+        '<l:chkData xmlns:l="urn:ietf:params:xml:ns:launch-1.0"><l:cd><l:name exists="1">example.tld</l:name><l:claimKey>key-1</l:claimKey></l:cd></l:chkData>',
+      );
+      expect(parseLaunchCheck(node)).toEqual({ results: [{ name: 'example.tld', exists: true, claimKeys: [{ key: 'key-1' }] }] });
     });
 
-    test('should allow optional fields', () => {
-      const trademark: TradeMark = {
-        name: 'Simple Mark'
-      };
-
-      expect(trademark.number).toBeUndefined();
-      expect(trademark.regDate).toBeUndefined();
-      expect(trademark.exDate).toBeUndefined();
+    test('create data with a custom phase', () => {
+      const node = parseXml(
+        '<launch:creData xmlns:launch="urn:ietf:params:xml:ns:launch-1.0"><launch:phase name="early">custom</launch:phase><launch:applicationID>2393</launch:applicationID></launch:creData>',
+      );
+      expect(parseLaunchCreate(node)).toEqual({ phase: 'custom', subPhase: 'early', applicationID: '2393' });
     });
-  });
 
-  describe('Namespace', () => {
-    test('should have correct namespace URI', () => {
-      expect(LAUNCH_NAMESPACE).toBe('urn:ietf:params:xml:ns:launch-1.0');
+    test('info data with a named custom status', () => {
+      const node = parseXml(
+        '<launch:infData xmlns:launch="urn:ietf:params:xml:ns:launch-1.0"><launch:phase>sunrise</launch:phase><launch:status s="custom" name="review">Under review</launch:status></launch:infData>',
+      );
+      expect(parseLaunchInfo(node)).toEqual({
+        phase: 'sunrise',
+        status: { s: 'custom', name: 'review', message: 'Under review' },
+        marks: [],
+      });
     });
   });
 });

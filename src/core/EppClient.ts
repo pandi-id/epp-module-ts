@@ -1,1098 +1,822 @@
+import { randomBytes } from 'crypto';
+import { EventEmitter } from 'events';
+import { isIP } from 'net';
 import * as tls from 'tls';
-import * as net from 'net';
-import * as fs from 'fs';
-import { EppRequest } from './EppRequest';
-import { XmlParser } from '../utils/XmlParser';
-import { 
-  EppConfig, 
-  EppResponse, 
-  EppError,
-  ContactCreateRequest, 
-  ContactUpdateRequest,
+import type {
+  CommandOptions,
+  EppConfig,
+  EppLogger,
+  EppResponse,
+  Greeting,
+  LoginOptions,
+  PollMessageData,
+  UserAgent,
+} from '../types/Common';
+import type {
+  ContactCheckResult,
+  ContactCreateRequest,
+  ContactCreateResult,
+  ContactInfo,
+  ContactInfoOptions,
   ContactTransferRequest,
+  ContactTransferResult,
+  ContactUpdateRequest,
+} from '../types/Contact';
+import type {
+  DomainCheckOptions,
+  DomainCheckResult,
   DomainCreateRequest,
-  DomainUpdateRequest,
+  DomainCreateResult,
+  DomainDeleteOptions,
+  DomainInfo,
+  DomainInfoOptions,
   DomainRenewRequest,
+  DomainRenewResult,
+  DomainRestoreOptions,
   DomainTransferRequest,
-  HostCreateRequest,
-  HostUpdateRequest,
-  FeeCheckRequest 
-} from '../types';
+  DomainTransferResult,
+  DomainUpdateRequest,
+} from '../types/Domain';
+import type { FeeCheckCommand, FeeCheckData, FeeCheckRequest } from '../types/Fee';
+import type { HostCheckResult, HostCreateRequest, HostCreateResult, HostInfo, HostUpdateRequest } from '../types/Host';
+import type { XmlNode } from '../xml/XmlReader';
+import type { XmlElement } from '../xml/XmlWriter';
+import {
+  buildContactCheck,
+  buildContactCreate,
+  buildContactDelete,
+  buildContactInfo,
+  buildContactTransfer,
+  buildContactUpdate,
+  parseContactCheck,
+  parseContactCreate,
+  parseContactInfo,
+  parseContactTransfer,
+} from '../mapping/Contact';
+import {
+  buildDomainCheck,
+  buildDomainCreate,
+  buildDomainDelete,
+  buildDomainInfo,
+  buildDomainRenew,
+  buildDomainRestore,
+  buildDomainTransfer,
+  buildDomainUpdate,
+  parseDomainCheck,
+  parseDomainCreate,
+  parseDomainInfo,
+  parseDomainRenew,
+  parseDomainTransfer,
+} from '../mapping/Domain';
+import { buildCommandXml, buildHelloXml } from '../mapping/Envelope';
+import {
+  buildHostCheck,
+  buildHostCreate,
+  buildHostDelete,
+  buildHostInfo,
+  buildHostUpdate,
+  parseHostCheck,
+  parseHostCreate,
+  parseHostInfo,
+} from '../mapping/Host';
+import { ParsedResponse, parseEppDocument, parsePollData, parseResponse, toEppResponse } from '../mapping/Response';
+import { buildLogin, buildLogout, buildPoll, parseGreeting } from '../mapping/Session';
+import { asArray, CommandParts } from '../mapping/Shared';
+import { EppCommandError, EppConnectionError, EppProtocolError, EppTimeoutError, EppValidationError } from './Errors';
+import { DEFAULT_MAX_FRAME_SIZE, encodeFrame, FrameDecoder } from './Framing';
+import { DEFAULT_OBJECT_URIS, NS, SUPPORTED_EXTENSION_URIS } from './Namespaces';
+import { redactXml } from './Redact';
+import { VERSION } from './Version';
+
+interface Pending {
+  resolve(xml: string): void;
+  reject(error: Error): void;
+}
+
+interface ResolvedConfig extends EppConfig {
+  port: number;
+  lang: string;
+  version: string;
+  timeout: number;
+  maxFrameSize: number;
+  clTRIDPrefix: string;
+}
+
+/** Result codes after which the server ends the session (RFC 5730 Section 3). */
+const SESSION_ENDING_CODES = [1500, 2500, 2501, 2502];
 
 /**
- * EPP Client menggunakan TLS/TCP Transport
- * Referensi: RFC 5734 - EPP Transport over TCP
- * 
- * EPP menggunakan persistent TCP connection dengan TLS encryption.
- * Data ditransmit dalam frames dengan 4-byte header yang berisi
- * total frame size (termasuk header).
- * 
- * Client implementation untuk EPP protocol yang support:
- * - Domain operations (RFC 5731)
- * - Contact operations (RFC 5733)
- * - Host operations (RFC 5732)
- * - Fee extension (RFC 8748)
- * 
- * Transport Features:
- * - TLS 1.2+ encryption (RFC 5734 Section 5)
- * - Mutual TLS authentication support
- * - Persistent connection dengan keep-alive
- * - 4-byte frame header (network byte order)
- * - Auto-reconnect pada connection loss
- * 
+ * EPP client over TLS/TCP (RFC 5730, RFC 5734).
+ *
+ * Commands are sent one at a time over a single connection; calls made
+ * while another command is in flight are queued. Each command resolves with
+ * an {@link EppResponse} for 1xxx result codes and rejects with an
+ * {@link EppCommandError} for 2xxx codes.
+ *
+ * Events:
+ * - `greeting` (greeting: Greeting): a greeting was received.
+ * - `close` (): the connection closed.
+ * - `reconnect` (): the client reconnected and logged in again (`autoReconnect`).
+ *
  * @example
  * ```typescript
  * const client = new EppClient({
  *   host: 'epp.registry.example',
- *   port: 700, // Standard EPP port
- *   username: 'client-id',
- *   password: 'password',
- *   timeout: 30000,
- *   // Optional: Mutual TLS
- *   clientCert: fs.readFileSync('client-cert.pem'),
- *   clientKey: fs.readFileSync('client-key.pem')
+ *   username: 'registrar-id',
+ *   password: 'secret',
  * });
- * 
- * // Connect dan login
  * await client.connect();
- * 
- * // Check domain availability
- * const result = await client.domainCheck(['example.com', 'example.net']);
- * 
- * // Logout dan disconnect
+ * await client.login();
+ * const { data } = await client.domainCheck(['example.com']);
  * await client.logout();
  * await client.disconnect();
  * ```
  */
-export class EppClient {
-  private config: EppConfig;
+export class EppClient extends EventEmitter {
+  private readonly config: ResolvedConfig;
+  private readonly logger: EppLogger | null;
   private socket: tls.TLSSocket | null = null;
-  private eppRequest: EppRequest;
-  private connected: boolean = false;
-  private greeting: any = null;
-  private buffer: Buffer = Buffer.alloc(0);
-  private pendingResponse: Promise<string> | null = null;
-  private responseResolver: ((value: string) => void) | null = null;
-  private responseRejecter: ((error: Error) => void) | null = null;
+  private decoder: FrameDecoder;
+  private connected = false;
+  private loggedIn = false;
+  private greeting: Greeting | null = null;
+  private services: { objURIs: string[]; extURIs: string[] } | null = null;
+  private pending: Pending | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private connecting: Promise<Greeting> | null = null;
+  private reconnecting: Promise<void> | null = null;
+  private lastLogin: LoginOptions | null = null;
+  private keepAliveTimer: NodeJS.Timeout | null = null;
+  private clTRIDCounter = 0;
 
-  /**
-   * Konstruktor EPP Client
-   * 
-   * @param config - Konfigurasi EPP client
-   */
   constructor(config: EppConfig) {
+    super();
+    if (!config || !config.host) throw new EppValidationError('config.host is required');
+    if (!config.username) throw new EppValidationError('config.username is required');
+    if (typeof config.password !== 'string') throw new EppValidationError('config.password is required');
     this.config = {
-      lang: 'en',
-      version: '1.0',
-      timeout: 30000,
-      port: 700, // Standard EPP port (RFC 5734 Section 3)
-      debug: false,
-      rejectUnauthorized: true, // Validate server certificate
-      ...config
+      ...config,
+      port: config.port ?? 700,
+      lang: config.lang ?? 'en',
+      version: config.version ?? '1.0',
+      timeout: config.timeout ?? 30000,
+      maxFrameSize: config.maxFrameSize ?? DEFAULT_MAX_FRAME_SIZE,
+      clTRIDPrefix: config.clTRIDPrefix ?? 'EPPTS',
     };
-
-    this.eppRequest = new EppRequest();
-  }
-
-  /**
-   * Connect to EPP server menggunakan TLS/TCP
-   * Referensi: RFC 5734 Section 2 - Connection Management
-   * 
-   * Establishes persistent TCP connection dengan TLS encryption.
-   * Server akan send greeting message setelah connection established.
-   * 
-   * @throws {Error} Jika connection gagal
-   * 
-   * @example
-   * ```typescript
-   * await client.connect();
-   * console.log('Connected to EPP server');
-   * ```
-   */
-  async connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      if (this.connected && this.socket) {
-        resolve();
-        return;
-      }
-
-      // TLS options (RFC 5734 Section 5)
-      const tlsOptions: tls.ConnectionOptions = {
-        host: this.config.host,
-        port: this.config.port || 700,
-        rejectUnauthorized: this.config.rejectUnauthorized !== false,
-        // TLS version constraints
-        minVersion: (this.config.minVersion as any) || 'TLSv1.2', // Minimum TLS 1.2
-        maxVersion: this.config.maxVersion as any,
-        // Mutual TLS support
-        cert: this.config.clientCert,
-        key: this.config.clientKey,
-        ca: this.config.ca,
-        passphrase: this.config.passphrase,
-        // Cipher configuration
-        ciphers: this.config.ciphers,
-        // SNI support
-        servername: this.config.servername || this.config.host,
-        // Server identity verification
-        checkServerIdentity: this.config.checkServerIdentity !== false ? undefined : () => undefined,
-      };
-
-      if (this.config.debug) {
-        console.log(`Connecting to ${this.config.host}:${this.config.port || 700}...`);
-      }
-
-      // Create TLS socket
-      this.socket = tls.connect(tlsOptions, () => {
-        if (!this.socket) return;
-
-        if (this.config.debug) {
-          console.log('TLS connection established');
-          console.log('Cipher:', this.socket.getCipher());
-          console.log('Protocol:', this.socket.getProtocol());
-        }
-
-        this.connected = true;
-      });
-
-      // Setup event handlers
-      this.socket.on('data', (data: Buffer) => {
-        this.handleData(data);
-      });
-
-      this.socket.on('error', (error: Error) => {
-        if (this.config.debug) {
-          console.error('Socket error:', error);
-        }
-        this.connected = false;
-        
-        if (this.responseRejecter) {
-          this.responseRejecter(error);
-          this.responseRejecter = null;
-          this.responseResolver = null;
-        }
-        
-        reject(error);
-      });
-
-      this.socket.on('end', () => {
-        if (this.config.debug) {
-          console.log('Socket ended');
-        }
-        this.connected = false;
-      });
-
-      this.socket.on('close', () => {
-        if (this.config.debug) {
-          console.log('Socket closed');
-        }
-        this.connected = false;
-        this.socket = null;
-      });
-
-      // Wait for greeting message
-      const greetingTimeout = setTimeout(() => {
-        reject(new Error('Timeout waiting for greeting'));
-      }, this.config.timeout);
-
-      const originalResolver = this.responseResolver;
-      this.responseResolver = (xml: string) => {
-        clearTimeout(greetingTimeout);
-        
-        XmlParser.parse(xml)
-          .then((parsed) => {
-            this.greeting = parsed.epp?.greeting;
-            
-            if (this.config.debug) {
-              console.log('Received greeting:', JSON.stringify(this.greeting, null, 2));
-            }
-            
-            resolve();
-          })
-          .catch((error) => {
-            reject(error);
-          });
-      };
-    });
-  }
-
-  /**
-   * Disconnect dari EPP server
-   * Referensi: RFC 5734 Section 2 - Connection Management
-   * 
-   * Closes TLS/TCP connection. SHOULD logout before disconnect.
-   * 
-   * @example
-   * ```typescript
-   * await client.logout();
-   * await client.disconnect();
-   * ```
-   */
-  async disconnect(): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.socket) {
-        this.connected = false;
-        resolve();
-        return;
-      }
-
-      this.socket.end(() => {
-        if (this.config.debug) {
-          console.log('Disconnected from EPP server');
-        }
-        this.connected = false;
-        this.socket = null;
-        resolve();
-      });
-    });
-  }
-
-  /**
-   * Handle incoming data dari socket
-   * Referensi: RFC 5734 Section 4 - Data Unit Format
-   * 
-   * EPP menggunakan 4-byte header dalam network byte order (big-endian)
-   * yang berisi total frame size termasuk header.
-   * 
-   * @param data - Data buffer dari socket
-   */
-  private handleData(data: Buffer): void {
-    // Append data ke buffer
-    this.buffer = Buffer.concat([this.buffer, data]);
-
-    // Process complete frames
-    while (this.buffer.length >= 4) {
-      // Read 4-byte header (network byte order - big-endian)
-      const frameSize = this.buffer.readUInt32BE(0);
-
-      // Check jika complete frame tersedia
-      if (this.buffer.length < frameSize) {
-        break; // Wait for more data
-      }
-
-      // Extract frame (excluding 4-byte header)
-      const frameData = this.buffer.slice(4, frameSize);
-      this.buffer = this.buffer.slice(frameSize);
-
-      // Convert to XML string
-      const xml = frameData.toString('utf8');
-
-      if (this.config.debug) {
-        console.log('Received EPP Frame:');
-        console.log(xml);
-      }
-
-      // Resolve pending response
-      if (this.responseResolver) {
-        this.responseResolver(xml);
-        this.responseResolver = null;
-        this.responseRejecter = null;
-        this.pendingResponse = null;
-      }
+    if (!(this.config.timeout > 0)) throw new EppValidationError('config.timeout must be a positive number of milliseconds');
+    if (!/^\S{1,32}$/.test(this.config.clTRIDPrefix)) {
+      throw new EppValidationError('config.clTRIDPrefix must be 1-32 characters without spaces');
     }
+    this.logger = config.logger ?? (config.debug ? consoleLogger : null);
+    this.decoder = new FrameDecoder(this.config.maxFrameSize);
+  }
+
+  // ==========================================================================
+  // Session (RFC 5730 Section 2.9.1, RFC 5734)
+  // ==========================================================================
+
+  /**
+   * Open the TLS connection and wait for the server greeting (RFC 5734
+   * Section 2). Resolves immediately when already connected.
+   *
+   * @throws {EppConnectionError} when the connection fails.
+   * @throws {EppTimeoutError} when no greeting arrives within `connectTimeout`.
+   */
+  async connect(): Promise<Greeting> {
+    if (this.connected && this.socket && this.greeting) return this.greeting;
+    if (!this.connecting) {
+      this.connecting = this.openConnection().finally(() => {
+        this.connecting = null;
+      });
+    }
+    return this.connecting;
   }
 
   /**
-   * Send EPP command ke server
-   * Referensi: RFC 5734 Section 4 - Data Unit Format
-   * 
-   * Encapsulates XML dalam EPP frame dengan 4-byte header.
-   * 
-   * @param xml - XML command string
-   * @returns EPP response
-   * @throws {EppError} Jika terjadi error
+   * Log in (RFC 5730 Section 2.9.1.1), connecting first if needed.
+   *
+   * The object and extension services announced are those this client
+   * supports that the server lists in its greeting, unless overridden by
+   * `objURIs`/`extURIs`; `additionalExtURIs` adds registry-specific
+   * extensions the server offers. Passwords longer than 16 characters are
+   * sent with the loginSec extension (RFC 8807).
+   *
+   * Result codes: 1000 on success; 2200 authentication error, 2501
+   * authentication error with the server closing the connection, 2307 an
+   * announced service is not implemented.
    */
-  private async sendCommand(xml: string): Promise<EppResponse> {
-    if (!this.connected || !this.socket) {
-      throw {
-        name: 'ConnectionError',
-        code: 0,
-        message: 'Not connected to EPP server. Call connect() first.'
-      } as EppError;
-    }
-
-    // Create frame dengan 4-byte header (RFC 5734 Section 4)
-    const xmlBuffer = Buffer.from(xml, 'utf8');
-    const frameSize = xmlBuffer.length + 4; // Include header size
-    const frame = Buffer.alloc(frameSize);
-    
-    // Write frame size dalam network byte order (big-endian)
-    frame.writeUInt32BE(frameSize, 0);
-    // Write XML data
-    xmlBuffer.copy(frame, 4);
-
-    if (this.config.debug) {
-      console.log('Sending EPP Frame:');
-      console.log(xml);
-    }
-
-    // Send frame
-    this.socket.write(frame);
-
-    // Wait for response
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.responseResolver = null;
-        this.responseRejecter = null;
-        reject({
-          name: 'TimeoutError',
-          code: 0,
-          message: 'Request timeout'
-        } as EppError);
-      }, this.config.timeout);
-
-      this.responseResolver = async (responseXml: string) => {
-        clearTimeout(timeout);
-
-        try {
-          // Parse XML response
-          const parsed = await XmlParser.parse(responseXml);
-          const result = XmlParser.extractResponseData(parsed);
-
-          // RFC 5730 Section 3 - Result Codes
-          // 1xxx codes = Command completed successfully
-          // 2xxx codes = Command error
-          if (result.code >= 1000 && result.code < 2000) {
-            resolve({
-              success: true,
-              code: result.code,
-              message: result.message,
-              data: result.data,
-              clTRID: result.clTRID,
-              svTRID: result.svTRID
-            });
-          } else {
-            reject({
-              name: 'EPPError',
-              code: result.code,
-              message: result.message,
-              values: result.values
-            } as EppError);
-          }
-        } catch (error) {
-          reject({
-            name: 'ParseError',
-            code: 0,
-            message: error instanceof Error ? error.message : 'Failed to parse response'
-          } as EppError);
-        }
-      };
-
-      this.responseRejecter = (error: Error) => {
-        clearTimeout(timeout);
-        reject({
-          name: 'NetworkError',
-          code: 0,
-          message: error.message
-        } as EppError);
-      };
-    });
-  }
-
-  /**
-   * Login Command
-   * Referensi: RFC 5730 Section 2.9.1.1 - <login> Command
-   * 
-   * Login command digunakan untuk authenticate client ke EPP server.
-   * MUST be called setelah connect() dan sebelum operations lain.
-   * 
-   * Success result codes:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2200: Authentication error
-   * - 2500: Command syntax error
-   * 
-   * @param newPassword - Optional new password untuk password change
-   * @returns EPP response dengan session information
-   * 
-   * @example
-   * ```typescript
-   * await client.connect();
-   * await client.login();
-   * // atau untuk password change
-   * await client.login('newPassword123');
-   * ```
-   */
-  async login(newPassword?: string): Promise<EppResponse> {
-    const xml = this.eppRequest.login(
-      this.config.username, 
-      this.config.password, 
-      { 
-        newPassword,
-        lang: this.config.lang,
-        version: this.config.version
-      }
+  async login(options: LoginOptions = {}): Promise<EppResponse> {
+    const greeting = await this.connect();
+    const offered = (uri: string) => greeting.extURIs.includes(uri);
+    const objURIs = options.objURIs ?? this.config.objURIs ?? DEFAULT_OBJECT_URIS.filter((uri) => greeting.objURIs.includes(uri));
+    const baseExtURIs = options.extURIs ?? this.config.extURIs ?? SUPPORTED_EXTENSION_URIS.filter(offered);
+    const additional = [...(this.config.additionalExtURIs ?? []), ...(options.additionalExtURIs ?? [])].filter(
+      (uri) => offered(uri) && !baseExtURIs.includes(uri),
     );
-    return this.sendCommand(xml);
+    const extURIs = [...baseExtURIs, ...new Set(additional)];
+    if (objURIs.length === 0) {
+      throw new EppValidationError(
+        `The server offers none of the object services ${DEFAULT_OBJECT_URIS.join(', ')}; set objURIs to announce others`,
+      );
+    }
+    const parts = buildLogin({
+      clID: this.config.username,
+      pw: this.config.password,
+      newPW: options.newPassword,
+      version: this.config.version,
+      lang: this.config.lang,
+      objURIs,
+      extURIs,
+      userAgent: this.userAgent(),
+    });
+    const response = await this.command(parts, undefined, { requireSession: false });
+    this.loggedIn = true;
+    this.services = { objURIs: [...objURIs], extURIs: [...extURIs] };
+    if (options.newPassword !== undefined) this.config.password = options.newPassword;
+    this.lastLogin = { objURIs: options.objURIs, extURIs: options.extURIs, additionalExtURIs: options.additionalExtURIs };
+    for (const event of response.extensions.loginSec ?? []) {
+      this.warn(`Login security ${event.level} (${event.type}${event.exDate ? `, expires ${event.exDate}` : ''})${event.message ? `: ${event.message}` : ''}`);
+    }
+    this.scheduleKeepAlive();
+    return response;
   }
 
   /**
-   * Logout Command
-   * Referensi: RFC 5730 Section 2.9.1.2 - <logout> Command
-   * 
-   * Logout command digunakan untuk end EPP session dengan server.
-   * SHOULD be called sebelum disconnect().
-   * 
-   * Success result code:
-   * - 1500: Command completed successfully, ending session
-   * 
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * await client.logout();
-   * await client.disconnect();
-   * ```
+   * End the session (RFC 5730 Section 2.9.1.2). The server answers 1500 and
+   * closes the connection.
    */
   async logout(): Promise<EppResponse> {
-    const xml = this.eppRequest.logout();
-    return this.sendCommand(xml);
+    this.lastLogin = null;
+    const response = await this.command(buildLogout(), undefined, { requireSession: false });
+    this.loggedIn = false;
+    this.services = null;
+    this.stopKeepAlive();
+    return response;
+  }
+
+  /** Close the connection. Pending and queued commands fail with {@link EppConnectionError}. */
+  async disconnect(): Promise<void> {
+    this.stopKeepAlive();
+    this.lastLogin = null;
+    const socket = this.socket;
+    if (!socket) {
+      this.connected = false;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => socket.destroy(), 5000);
+      socket.once('close', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      socket.end();
+    });
   }
 
   /**
-   * Poll Command - Message Queue Management
-   * Referensi: RFC 5730 Section 2.9.2.3 - EPP <poll> Command
-   * 
-   * Poll command digunakan untuk retrieve dan acknowledge messages
-   * dari server message queue. Queue berisi notifications tentang
-   * events seperti domain transfers, expirations, dan updates.
-   * 
-   * Operations:
-   * - 'req': Request first message dari queue
-   * - 'ack': Acknowledge receipt of message (removes from queue)
-   * 
-   * Success result codes:
-   * - 1000: Command completed successfully
-   * - 1300: Command completed successfully; no messages
-   * - 1301: Command completed successfully; ack to dequeue
-   * 
-   * Message queue behavior:
-   * - Messages di-queue dalam FIFO order
-   * - 'req' operation retrieves but doesn't remove message
-   * - 'ack' operation removes message dari queue
-   * - Server may limit queue size and message retention
-   * 
-   * @param op - 'req' untuk request message, 'ack' untuk acknowledge
-   * @param msgID - Message ID (required untuk ack operation)
-   * @returns EPP response dengan message data (jika ada)
-   * 
+   * Send `<hello>` (RFC 5730 Section 2.3) and return the fresh greeting.
+   * Also keeps an idle session alive.
+   */
+  async hello(): Promise<Greeting> {
+    const raw = await this.exchange(buildHelloXml());
+    const greeting = this.readGreeting(raw);
+    this.greeting = greeting;
+    this.emit('greeting', greeting);
+    return greeting;
+  }
+
+  /**
+   * Poll the message queue (RFC 5730 Section 2.9.2.3).
+   *
+   * `req` returns the oldest message: 1301 with `msgQ` and the message
+   * payload in `data`, or 1300 when the queue is empty. `ack` removes the
+   * message with the given ID.
+   *
    * @example
    * ```typescript
-   * // Request first message dari queue
-   * const result = await client.poll('req');
-   * if (result.data?.msgQ) {
-   *   console.log('Message:', result.data.msgQ.msg);
-   *   console.log('Remaining:', result.data.msgQ.count);
-   *   
-   *   // Acknowledge message
-   *   await client.poll('ack', result.data.msgQ.id);
-   * }
-   * ```
-   * 
-   * @example
-   * ```typescript
-   * // Process all messages in queue
-   * let hasMessages = true;
-   * while (hasMessages) {
-   *   const result = await client.poll('req');
-   *   
-   *   if (result.code === 1300) {
-   *     // No messages
-   *     hasMessages = false;
-   *   } else if (result.data?.msgQ) {
-   *     // Process message
-   *     console.log(result.data.msgQ.msg);
-   *     
-   *     // Acknowledge
-   *     await client.poll('ack', result.data.msgQ.id);
-   *   }
+   * const res = await client.poll('req');
+   * if (res.code === 1301 && res.msgQ) {
+   *   console.log(res.msgQ.message, res.data?.type);
+   *   await client.poll('ack', res.msgQ.id);
    * }
    * ```
    */
-  async poll(op: 'req' | 'ack', msgID?: string): Promise<EppResponse> {
-    const xml = this.eppRequest.poll(op, msgID);
-    return this.sendCommand(xml);
+  async poll(op: 'req' | 'ack' = 'req', msgID?: string): Promise<EppResponse<PollMessageData>> {
+    return this.command(buildPoll(op, msgID), (parsed) => (parsed.resData ? parsePollData(parsed.resData) : undefined));
   }
 
-  // ========================================================================
-  // CONTACT COMMANDS (RFC 5733)
-  // ========================================================================
+  // ==========================================================================
+  // Domain (RFC 5731)
+  // ==========================================================================
 
   /**
-   * Contact Check Command
-   * Referensi: RFC 5733 Section 3.1.1 - EPP <check> Command
-   * 
-   * Check command digunakan untuk determine apakah contact ID tersedia
-   * untuk provisioning. Support multiple IDs dalam single request.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param ids - Array of contact IDs untuk dicek (1-20 IDs)
-   * @returns EPP response dengan availability information
-   * 
+   * Check domain availability (RFC 5731 Section 3.1.1). Supports the fee
+   * (RFC 8748), launch claims (RFC 8334) and allocation token (RFC 8495)
+   * extensions through `options`.
+   */
+  async domainCheck(names: string | string[], options: DomainCheckOptions = {}): Promise<EppResponse<DomainCheckResult[]>> {
+    return this.command(buildDomainCheck(asArray(names), options), resData(NS.domain, 'chkData', parseDomainCheck));
+  }
+
+  /**
+   * Retrieve domain data (RFC 5731 Section 3.1.2). DNSSEC, RGP and launch
+   * data appear in `extensions`. Error 2303: object does not exist.
+   *
+   * @param options Info options, or the domain's authorization password.
+   */
+  async domainInfo(name: string, options: DomainInfoOptions | string = {}): Promise<EppResponse<DomainInfo>> {
+    const opts = typeof options === 'string' ? { authInfo: options } : options;
+    return this.command(buildDomainInfo(name, opts), resData(NS.domain, 'infData', parseDomainInfo));
+  }
+
+  /**
+   * Create a domain (RFC 5731 Section 3.2.1), optionally with DNSSEC data,
+   * launch phase data (sunrise SMD, claims notice), a fee and an allocation
+   * token. Errors: 2302 object exists, 2306 parameter value policy error.
+   */
+  async domainCreate(request: DomainCreateRequest): Promise<EppResponse<DomainCreateResult>> {
+    return this.command(buildDomainCreate(request), resData(NS.domain, 'creData', parseDomainCreate));
+  }
+
+  /**
+   * Update a domain (RFC 5731 Section 3.2.5): name servers, contacts,
+   * statuses, registrant, authorization info, and DNSSEC data.
+   * Error 2304: object status prohibits operation.
+   */
+  async domainUpdate(request: DomainUpdateRequest): Promise<EppResponse> {
+    return this.command(buildDomainUpdate(request));
+  }
+
+  /**
+   * Renew a domain (RFC 5731 Section 3.2.3). `curExpDate` must match the
+   * current expiration date. Error 2105: object is not eligible for renewal.
+   */
+  async domainRenew(request: DomainRenewRequest): Promise<EppResponse<DomainRenewResult>> {
+    return this.command(buildDomainRenew(request), resData(NS.domain, 'renData', parseDomainRenew));
+  }
+
+  /**
+   * Delete a domain (RFC 5731 Section 3.2.2). Registries with grace periods
+   * answer 1001 and move the domain to redemption (RFC 3915).
+   */
+  async domainDelete(name: string, options: DomainDeleteOptions = {}): Promise<EppResponse> {
+    return this.command(buildDomainDelete(name, options));
+  }
+
+  /**
+   * Request, query, approve, reject or cancel a domain transfer (RFC 5731
+   * Section 3.2.4). A request answers 1001 (action pending).
+   */
+  async domainTransfer(request: DomainTransferRequest): Promise<EppResponse<DomainTransferResult>> {
+    return this.command(buildDomainTransfer(request), resData(NS.domain, 'trnData', parseDomainTransfer));
+  }
+
+  /**
+   * Restore a domain in its redemption period (RFC 3915 Section 4.2.5).
+   * Call without a report to request the restore; call again with `report`
+   * to submit the restore report, as ICANN gTLD registries require.
+   */
+  async domainRestore(name: string, options: DomainRestoreOptions = {}): Promise<EppResponse> {
+    return this.command(buildDomainRestore(name, options));
+  }
+
+  /**
+   * Price domain commands with the fee extension (RFC 8748): a domain check
+   * whose `data` is the fee information.
+   *
    * @example
    * ```typescript
-   * const result = await client.contactCheck(['sh8013', 'sah8013']);
-   * // result.data: [{ id: 'sh8013', available: true }, ...]
+   * const { data } = await client.feeCheck({ domain: 'example.com', command: ['create', 'renew'], period: 1, currency: 'USD' });
    * ```
    */
-  async contactCheck(ids: string[]): Promise<EppResponse> {
-    const xml = this.eppRequest.contactCheck(ids);
-    return this.sendCommand(xml);
+  async feeCheck(request: FeeCheckRequest): Promise<EppResponse<FeeCheckData>> {
+    const commands: FeeCheckCommand[] = asArray(request.command ?? 'create').map((command) => {
+      const value: FeeCheckCommand = typeof command === 'string' ? { name: command } : { ...command };
+      if (value.period === undefined && request.period !== undefined && ['create', 'renew', 'transfer'].includes(value.name)) {
+        value.period = request.period;
+      }
+      return value;
+    });
+    const response = await this.domainCheck(asArray(request.domain), { fee: { currency: request.currency, commands } });
+    return { ...response, data: response.extensions.feeCheck };
+  }
+
+  // ==========================================================================
+  // Contact (RFC 5733)
+  // ==========================================================================
+
+  /** Check contact ID availability (RFC 5733 Section 3.1.1). */
+  async contactCheck(ids: string | string[], options: CommandOptions = {}): Promise<EppResponse<ContactCheckResult[]>> {
+    return this.command(buildContactCheck(asArray(ids), options.extensions), resData(NS.contact, 'chkData', parseContactCheck));
   }
 
   /**
-   * Contact Info Command
-   * Referensi: RFC 5733 Section 3.1.2 - EPP <info> Command
-   * 
-   * Info command digunakan untuk retrieve information terkait contact object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * 
-   * @param id - Contact ID untuk query
-   * @param authInfo - Optional authorization info untuk access restricted data
-   * @returns EPP response dengan contact details
-   * 
-   * @example
-   * ```typescript
-   * const result = await client.contactInfo('sh8013');
-   * // result.data: { id: 'sh8013', email: '...', ... }
-   * ```
+   * Retrieve contact data (RFC 5733 Section 3.1.2).
+   *
+   * @param options Info options, or the contact's authorization password.
    */
-  async contactInfo(id: string, authInfo?: string): Promise<EppResponse> {
-    const authInfoObj = authInfo ? { pw: authInfo } : undefined;
-    const xml = this.eppRequest.contactInfo(id, authInfoObj);
-    return this.sendCommand(xml);
+  async contactInfo(id: string, options: ContactInfoOptions | string = {}): Promise<EppResponse<ContactInfo>> {
+    const opts = typeof options === 'string' ? { authInfo: options } : options;
+    return this.command(buildContactInfo(id, opts), resData(NS.contact, 'infData', parseContactInfo));
+  }
+
+  /** Create a contact (RFC 5733 Section 3.2.1). Error 2302: object exists. */
+  async contactCreate(request: ContactCreateRequest): Promise<EppResponse<ContactCreateResult>> {
+    return this.command(buildContactCreate(request), resData(NS.contact, 'creData', parseContactCreate));
+  }
+
+  /** Update a contact (RFC 5733 Section 3.2.5). */
+  async contactUpdate(request: ContactUpdateRequest): Promise<EppResponse> {
+    return this.command(buildContactUpdate(request));
+  }
+
+  /** Delete a contact (RFC 5733 Section 3.2.2). Error 2305: the contact is linked to a domain. */
+  async contactDelete(id: string, options: CommandOptions = {}): Promise<EppResponse> {
+    return this.command(buildContactDelete(id, options.extensions));
+  }
+
+  /** Request, query, approve, reject or cancel a contact transfer (RFC 5733 Section 3.2.4). */
+  async contactTransfer(request: ContactTransferRequest): Promise<EppResponse<ContactTransferResult>> {
+    return this.command(buildContactTransfer(request), resData(NS.contact, 'trnData', parseContactTransfer));
+  }
+
+  // ==========================================================================
+  // Host (RFC 5732)
+  // ==========================================================================
+
+  /** Check host name availability (RFC 5732 Section 3.1.1). */
+  async hostCheck(names: string | string[], options: CommandOptions = {}): Promise<EppResponse<HostCheckResult[]>> {
+    return this.command(buildHostCheck(asArray(names), options.extensions), resData(NS.host, 'chkData', parseHostCheck));
+  }
+
+  /** Retrieve host data (RFC 5732 Section 3.1.2). */
+  async hostInfo(name: string, options: CommandOptions = {}): Promise<EppResponse<HostInfo>> {
+    return this.command(buildHostInfo(name, options.extensions), resData(NS.host, 'infData', parseHostInfo));
   }
 
   /**
-   * Contact Create Command
-   * Referensi: RFC 5733 Section 3.2.1 - EPP <create> Command
-   * 
-   * Create command provisions instance dari contact object.
-   * Contact ID MUST be unique dalam repository.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2302: Object exists (contact ID already taken)
-   * - 2306: Parameter value policy error
-   * 
-   * @param data - Contact creation data
-   * @returns EPP response dengan contact ID dan creation details
-   * 
-   * @example
-   * ```typescript
-   * await client.contactCreate({
-   *   id: 'sh8013',
-   *   postalInfo: {
-   *     type: 'int',
-   *     name: 'John Doe',
-   *     addr: {
-   *       street: ['123 Example St'],
-   *       city: 'Jakarta',
-   *       cc: 'ID'
-   *     }
-   *   },
-   *   email: 'john@example.com',
-   *   authInfo: { pw: 'password123' }
-   * });
-   * ```
+   * Create a host (RFC 5732 Section 3.2.1). Glue addresses are required for
+   * hosts under a domain in the same registry; IP versions are detected.
    */
-  async contactCreate(data: ContactCreateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.contactCreate(data);
-    return this.sendCommand(xml);
+  async hostCreate(request: HostCreateRequest): Promise<EppResponse<HostCreateResult>> {
+    return this.command(buildHostCreate(request), resData(NS.host, 'creData', parseHostCreate));
   }
 
-  /**
-   * Contact Update Command
-   * Referensi: RFC 5733 Section 3.2.5 - EPP <update> Command
-   * 
-   * Update command mengubah information terkait contact object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2304: Object status prohibits operation
-   * 
-   * @param data - Contact update data (add/rem/chg)
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * await client.contactUpdate({
-   *   id: 'sh8013',
-   *   chg: {
-   *     email: 'newemail@example.com'
-   *   }
-   * });
-   * ```
-   */
-  async contactUpdate(data: ContactUpdateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.contactUpdate(data);
-    return this.sendCommand(xml);
+  /** Update a host's addresses, statuses or name (RFC 5732 Section 3.2.5). */
+  async hostUpdate(request: HostUpdateRequest): Promise<EppResponse> {
+    return this.command(buildHostUpdate(request));
   }
 
-  /**
-   * Contact Delete Command
-   * Referensi: RFC 5733 Section 3.2.2 - EPP <delete> Command
-   * 
-   * Delete command removes contact object dari repository.
-   * Contact MUST NOT be linked dengan any other objects.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2304: Object status prohibits operation
-   * - 2305: Object association prohibits operation (contact is linked)
-   * 
-   * @param id - Contact ID untuk dihapus
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * await client.contactDelete('sh8013');
-   * ```
-   */
-  async contactDelete(id: string): Promise<EppResponse> {
-    const xml = this.eppRequest.contactDelete(id);
-    return this.sendCommand(xml);
+  /** Delete a host (RFC 5732 Section 3.2.2). Error 2305: the host is used by a domain. */
+  async hostDelete(name: string, options: CommandOptions = {}): Promise<EppResponse> {
+    return this.command(buildHostDelete(name, options.extensions));
   }
 
+  // ==========================================================================
+  // Raw access and state
+  // ==========================================================================
+
   /**
-   * Contact Transfer Command
-   * Referensi: RFC 5733 Section 3.2.4 - EPP <transfer> Command
-   * 
-   * Transfer command provides query dan transform operations untuk
-   * contact transfers between clients.
-   * 
-   * Success result codes:
-   * - 1000: Command completed successfully
-   * - 1001: Command completed successfully; action pending
-   * 
-   * @param data - Transfer request data
-   * @returns EPP response dengan transfer status
+   * Send a complete EPP command document and return the parsed response,
+   * for commands this client does not model. Frames are queued like any
+   * other command; the clTRID is not checked.
    */
-  async contactTransfer(data: ContactTransferRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.contactTransfer(data);
-    return this.sendCommand(xml);
+  async sendRaw(xml: string): Promise<EppResponse> {
+    await this.ensureSession();
+    const raw = await this.exchange(xml);
+    const response = toEppResponse(parseResponse(parseEppDocument(raw), raw), raw, undefined);
+    if (!response.success) throw new EppCommandError(response);
+    return response;
   }
 
-  // ========================================================================
-  // DOMAIN COMMANDS (RFC 5731)
-  // ========================================================================
-
-  /**
-   * Domain Check Command
-   * Referensi: RFC 5731 Section 3.1.1 - EPP <check> Command
-   * 
-   * Check command digunakan untuk determine apakah domain name tersedia
-   * untuk registration. Support multiple domain names dalam single request.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param domains - Array of domain names untuk dicek (1-20 domains)
-   * @returns EPP response dengan availability information
-   * 
-   * @example
-   * ```typescript
-   * const result = await client.domainCheck(['example.com', 'example.net']);
-   * // result.data: [{ name: 'example.com', available: true }, ...]
-   * ```
-   */
-  async domainCheck(domains: string[]): Promise<EppResponse> {
-    const xml = this.eppRequest.domainCheck(domains);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Info Command
-   * Referensi: RFC 5731 Section 3.1.2 - EPP <info> Command
-   * 
-   * Info command digunakan untuk retrieve information terkait domain object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * 
-   * @param domain - Domain name untuk query
-   * @param authInfo - Optional authorization info untuk access restricted data
-   * @returns EPP response dengan domain details
-   * 
-   * @example
-   * ```typescript
-   * const result = await client.domainInfo('example.com');
-   * // result.data: { name: 'example.com', status: [...], ... }
-   * ```
-   */
-  async domainInfo(domain: string, authInfo?: string): Promise<EppResponse> {
-    const authInfoObj = authInfo ? { pw: authInfo } : undefined;
-    const xml = this.eppRequest.domainInfo(domain, authInfoObj);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Create Command
-   * Referensi: RFC 5731 Section 3.2.1 - EPP <create> Command
-   * 
-   * Create command provisions instance dari domain object.
-   * Domain name MUST be unique dalam repository.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2302: Object exists (domain already registered)
-   * - 2303: Required parameter missing (e.g., contact)
-   * - 2306: Parameter value policy error
-   * 
-   * @param data - Domain creation data
-   * @returns EPP response dengan domain name dan creation details
-   * 
-   * @example
-   * ```typescript
-   * await client.domainCreate({
-   *   name: 'example.com',
-   *   period: { value: 1, unit: 'y' },
-   *   registrant: 'sh8013',
-   *   contacts: [
-   *     { type: 'admin', id: 'sh8013' },
-   *     { type: 'tech', id: 'sh8013' }
-   *   ],
-   *   ns: { hostObj: ['ns1.example.com', 'ns2.example.com'] },
-   *   authInfo: { pw: 'password123' }
-   * });
-   * ```
-   */
-  async domainCreate(data: DomainCreateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.domainCreate(data);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Update Command
-   * Referensi: RFC 5731 Section 3.2.5 - EPP <update> Command
-   * 
-   * Update command mengubah information terkait domain object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2304: Object status prohibits operation
-   * 
-   * @param data - Domain update data (add/rem/chg)
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * await client.domainUpdate({
-   *   name: 'example.com',
-   *   add: {
-   *     ns: { hostObj: ['ns3.example.com'] }
-   *   }
-   * });
-   * ```
-   */
-  async domainUpdate(data: DomainUpdateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.domainUpdate(data);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Renew Command
-   * Referensi: RFC 5731 Section 3.2.3 - EPP <renew> Command
-   * 
-   * Renew command extends registration period dari domain object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2304: Object status prohibits operation
-   * - 2306: Parameter value policy error
-   * 
-   * @param data - Domain renew data
-   * @returns EPP response dengan new expiration date
-   * 
-   * @example
-   * ```typescript
-   * await client.domainRenew({
-   *   name: 'example.com',
-   *   curExpDate: '2025-12-01',
-   *   period: { value: 1, unit: 'y' }
-   * });
-   * ```
-   */
-  async domainRenew(data: DomainRenewRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.domainRenew(data);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Delete Command
-   * Referensi: RFC 5731 Section 3.2.2 - EPP <delete> Command
-   * 
-   * Delete command removes domain object dari repository.
-   * Some registries implement grace period untuk delete operations.
-   * 
-   * Success result codes:
-   * - 1000: Command completed successfully
-   * - 1001: Command completed successfully; action pending
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2304: Object status prohibits operation
-   * 
-   * @param domain - Domain name untuk dihapus
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * await client.domainDelete('example.com');
-   * ```
-   */
-  async domainDelete(domain: string): Promise<EppResponse> {
-    const xml = this.eppRequest.domainDelete(domain);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Domain Transfer Command
-   * Referensi: RFC 5731 Section 3.2.4 - EPP <transfer> Command
-   * 
-   * Transfer command provides query dan transform operations untuk
-   * domain transfers between clients.
-   * 
-   * Success result codes:
-   * - 1000: Command completed successfully
-   * - 1001: Command completed successfully; action pending
-   * 
-   * @param data - Transfer request data
-   * @returns EPP response dengan transfer status
-   * 
-   * @example
-   * ```typescript
-   * // Request transfer
-   * await client.domainTransfer({
-   *   name: 'example.com',
-   *   op: 'request',
-   *   authInfo: { pw: 'authcode123' }
-   * });
-   * 
-   * // Query transfer status
-   * await client.domainTransfer({
-   *   name: 'example.com',
-   *   op: 'query'
-   * });
-   * ```
-   */
-  async domainTransfer(data: DomainTransferRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.domainTransfer(data);
-    return this.sendCommand(xml);
-  }
-
-  // ========================================================================
-  // HOST COMMANDS (RFC 5732)
-  // ========================================================================
-
-  /**
-   * Host Check Command
-   * Referensi: RFC 5732 Section 3.1.1 - EPP <check> Command
-   * 
-   * Check command digunakan untuk determine apakah host name tersedia
-   * untuk provisioning.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param names - Array of host names untuk dicek
-   * @returns EPP response dengan availability information
-   * 
-   * @example
-   * ```typescript
-   * const result = await client.hostCheck(['ns1.example.com']);
-   * ```
-   */
-  async hostCheck(names: string[]): Promise<EppResponse> {
-    const xml = this.eppRequest.hostCheck(names);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Host Info Command
-   * Referensi: RFC 5732 Section 3.1.2 - EPP <info> Command
-   * 
-   * Info command digunakan untuk retrieve information terkait host object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param name - Host name untuk query
-   * @returns EPP response dengan host details
-   */
-  async hostInfo(name: string): Promise<EppResponse> {
-    const xml = this.eppRequest.hostInfo(name);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Host Create Command
-   * Referensi: RFC 5732 Section 3.2.1 - EPP <create> Command
-   * 
-   * Create command provisions instance dari host object.
-   * IP addresses MUST be provided untuk subordinate hosts (glue records).
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param data - Host creation data
-   * @returns EPP response
-   * 
-   * @example
-   * ```typescript
-   * // Subordinate host dengan IP addresses
-   * await client.hostCreate({
-   *   name: 'ns1.example.com',
-   *   addr: [
-   *     { ip: '192.0.2.1', type: 'v4' },
-   *     { ip: '2001:db8::1', type: 'v6' }
-   *   ]
-   * });
-   * ```
-   */
-  async hostCreate(data: HostCreateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.hostCreate(data);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Host Update Command
-   * Referensi: RFC 5732 Section 3.2.5 - EPP <update> Command
-   * 
-   * Update command mengubah information terkait host object.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * @param data - Host update data
-   * @returns EPP response
-   */
-  async hostUpdate(data: HostUpdateRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.hostUpdate(data);
-    return this.sendCommand(xml);
-  }
-
-  /**
-   * Host Delete Command
-   * Referensi: RFC 5732 Section 3.2.2 - EPP <delete> Command
-   * 
-   * Delete command removes host object dari repository.
-   * Host MUST NOT be associated dengan any domain objects.
-   * 
-   * Success result code:
-   * - 1000: Command completed successfully
-   * 
-   * Error result codes:
-   * - 2303: Object does not exist
-   * - 2305: Object association prohibits operation (host is linked)
-   * 
-   * @param name - Host name untuk dihapus
-   * @returns EPP response
-   */
-  async hostDelete(name: string): Promise<EppResponse> {
-    const xml = this.eppRequest.hostDelete(name);
-    return this.sendCommand(xml);
-  }
-
-  // ========================================================================
-  // FEE EXTENSION (RFC 8748)
-  // ========================================================================
-
-  /**
-   * Fee Check Command
-   * Referensi: RFC 8748 - EPP Fee Extension
-   * 
-   * Fee check digunakan untuk query biaya operasi domain sebelum execution.
-   * Support untuk create, renew, transfer, dan restore operations.
-   * 
-   * @param data - Fee check request data
-   * @returns EPP response dengan fee information
-   * 
-   * @example
-   * ```typescript
-   * const result = await client.feeCheck({
-   *   domain: 'example.com',
-   *   command: 'create',
-   *   period: { value: 1, unit: 'y' },
-   *   currency: 'USD'
-   * });
-   * ```
-   */
-  async feeCheck(data: FeeCheckRequest): Promise<EppResponse> {
-    const xml = this.eppRequest.feeCheck(data);
-    return this.sendCommand(xml);
-  }
-
-  // ========================================================================
-  // UTILITY METHODS
-  // ========================================================================
-
-  /**
-   * Check apakah client currently connected ke EPP server
-   * 
-   * @returns true jika connected, false otherwise
-   */
+  /** Whether the connection is open and the greeting was received. */
   isConnected(): boolean {
     return this.connected && this.socket !== null;
   }
 
-  /**
-   * Get server greeting message
-   * Referensi: RFC 5730 Section 2.4 - Greeting
-   * 
-   * Greeting berisi server information seperti:
-   * - Server ID
-   * - Server date/time
-   * - Protocol version
-   * - Supported services
-   * - Languages
-   * - Access policy
-   * 
-   * @returns Greeting object atau null jika belum connected
-   */
-  getGreeting(): any {
+  /** Whether a login succeeded on the current connection. */
+  isLoggedIn(): boolean {
+    return this.loggedIn && this.isConnected();
+  }
+
+  /** The most recent server greeting (RFC 5730 Section 2.4), or null before connecting. */
+  getGreeting(): Greeting | null {
     return this.greeting;
   }
 
-  /**
-   * Get TLS connection information
-   * 
-   * @returns TLS cipher dan protocol information
-   */
-  getConnectionInfo(): { cipher?: any; protocol?: string | null } | null {
-    if (!this.socket) {
-      return null;
-    }
-
-    return {
-      cipher: this.socket.getCipher(),
-      protocol: this.socket.getProtocol()
-    };
+  /** Object and extension URIs announced at login, or null when not logged in. */
+  getServices(): { objURIs: string[]; extURIs: string[] } | null {
+    return this.services ? { objURIs: [...this.services.objURIs], extURIs: [...this.services.extURIs] } : null;
   }
+
+  /** TLS details of the open connection, or null. */
+  getConnectionInfo(): { protocol: string | null; cipher: tls.CipherNameAndProtocol; authorized: boolean } | null {
+    if (!this.socket) return null;
+    return { protocol: this.socket.getProtocol(), cipher: this.socket.getCipher(), authorized: this.socket.authorized };
+  }
+
+  // ==========================================================================
+  // Internals
+  // ==========================================================================
+
+  private openConnection(): Promise<Greeting> {
+    const config = this.config;
+    const connectTimeout = config.connectTimeout ?? config.timeout;
+    return new Promise<Greeting>((resolve, reject) => {
+      const options: tls.ConnectionOptions = {
+        host: config.host,
+        port: config.port,
+        servername: config.servername ?? (isIP(config.host) ? undefined : config.host),
+        rejectUnauthorized: config.rejectUnauthorized !== false,
+        minVersion: config.minVersion ?? 'TLSv1.2',
+        maxVersion: config.maxVersion,
+        cert: config.clientCert,
+        key: config.clientKey,
+        passphrase: config.passphrase,
+        ca: config.ca,
+        ciphers: config.ciphers,
+        ...(config.checkServerIdentity === false ? { checkServerIdentity: () => undefined } : {}),
+        ...config.tlsOptions,
+      };
+      if (options.rejectUnauthorized === false) this.warn('TLS certificate verification is disabled (rejectUnauthorized: false)');
+
+      this.decoder = new FrameDecoder(config.maxFrameSize);
+      this.debug(`Connecting to ${config.host}:${config.port}`);
+      let socket: tls.TLSSocket;
+      try {
+        socket = tls.connect(options);
+      } catch (error) {
+        // Unusable key material (wrong passphrase, mismatched or malformed key) throws synchronously.
+        reject(new EppConnectionError(`Invalid TLS configuration: ${describeError(error as Error)}`, error as Error));
+        return;
+      }
+      this.socket = socket;
+      socket.setNoDelay(true);
+
+      let settled = false;
+      const fail = (error: Error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (this.pending === greetingWaiter) this.pending = null;
+        socket.destroy();
+        reject(error);
+      };
+      const timer = setTimeout(
+        () => fail(new EppTimeoutError(`No greeting from ${config.host}:${config.port} within ${connectTimeout} ms`)),
+        connectTimeout,
+      );
+      const greetingWaiter: Pending = {
+        resolve: (xml) => {
+          try {
+            const greeting = this.readGreeting(xml);
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            this.greeting = greeting;
+            this.connected = true;
+            this.emit('greeting', greeting);
+            resolve(greeting);
+          } catch (error) {
+            fail(error as Error);
+          }
+        },
+        reject: fail,
+      };
+      this.pending = greetingWaiter;
+
+      socket.on('secureConnect', () => {
+        const cipher = socket.getCipher();
+        this.debug(`TLS established: ${socket.getProtocol()} ${cipher?.name ?? ''}`);
+      });
+      socket.on('data', (chunk: Buffer) => this.onData(chunk));
+      socket.on('error', (error: Error) => {
+        const description = describeError(error);
+        this.debug(`Socket error: ${description}`);
+        this.failPending(new EppConnectionError(`Connection error: ${description}`, error));
+      });
+      socket.on('close', () => this.onClose(socket));
+    });
+  }
+
+  private onData(chunk: Buffer): void {
+    let frames: string[];
+    try {
+      frames = this.decoder.push(chunk);
+    } catch (error) {
+      const protocolError = new EppProtocolError((error as Error).message);
+      this.warn(`Closing connection: ${protocolError.message}`);
+      this.failPending(protocolError);
+      this.socket?.destroy();
+      return;
+    }
+    for (const xml of frames) {
+      this.debug(`<< ${redactXml(xml)}`);
+      const pending = this.pending;
+      if (!pending) {
+        this.warn('Ignoring a frame the server sent without a pending command');
+        continue;
+      }
+      this.pending = null;
+      pending.resolve(xml);
+    }
+  }
+
+  private onClose(socket: tls.TLSSocket): void {
+    if (this.socket !== socket) return;
+    this.socket = null;
+    this.connected = false;
+    this.loggedIn = false;
+    this.services = null;
+    this.stopKeepAlive();
+    this.decoder.reset();
+    this.failPending(new EppConnectionError('Connection closed'));
+    this.debug('Connection closed');
+    this.emit('close');
+  }
+
+  private failPending(error: Error): void {
+    const pending = this.pending;
+    this.pending = null;
+    pending?.reject(error);
+  }
+
+  /** Queue a frame and resolve with the next frame received. */
+  private exchange(xml: string): Promise<string> {
+    const run = this.queue.then(() => this.send(xml));
+    this.queue = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private send(xml: string): Promise<string> {
+    const socket = this.socket;
+    if (!socket || !this.connected) {
+      return Promise.reject(new EppConnectionError('Not connected to an EPP server. Call connect() and login() first.'));
+    }
+    return new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        if (this.pending !== waiter) return;
+        this.pending = null;
+        reject(new EppTimeoutError(`No response within ${this.config.timeout} ms; closing the connection`));
+        // A late response would otherwise be taken as the answer to the next command.
+        socket.destroy();
+      }, this.config.timeout);
+      const waiter: Pending = {
+        resolve: (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
+      this.pending = waiter;
+      this.debug(`>> ${redactXml(xml)}`);
+      socket.write(encodeFrame(xml));
+    }).finally(() => this.scheduleKeepAlive());
+  }
+
+  private async command<T = undefined>(
+    parts: CommandParts,
+    parse?: (parsed: ParsedResponse) => T | undefined,
+    options: { requireSession?: boolean } = {},
+  ): Promise<EppResponse<T>> {
+    if (options.requireSession !== false) await this.ensureSession();
+    this.checkExtensions(parts.extensions);
+    const clTRID = this.nextClTRID();
+    const raw = await this.exchange(buildCommandXml(parts, clTRID));
+    const parsed = parseResponse(parseEppDocument(raw), raw);
+    if (parsed.clTRID !== undefined && parsed.clTRID !== clTRID) {
+      this.socket?.destroy();
+      throw new EppProtocolError(`Response clTRID ${parsed.clTRID} does not match ${clTRID}; closing the connection`, raw);
+    }
+    const code = parsed.results[0].code;
+    if (SESSION_ENDING_CODES.includes(code)) this.loggedIn = false;
+    let data: T | undefined;
+    if (parse && code < 2000) {
+      try {
+        data = parse(parsed);
+      } catch (error) {
+        throw new EppProtocolError(`Could not interpret response data: ${(error as Error).message}`, raw);
+      }
+    }
+    const response = toEppResponse(parsed, raw, data);
+    if (!response.success) throw new EppCommandError(response);
+    return response;
+  }
+
+  private async ensureSession(): Promise<void> {
+    if (this.connected) return;
+    if (this.config.autoReconnect && this.lastLogin) {
+      const login = this.lastLogin;
+      if (!this.reconnecting) {
+        this.reconnecting = (async () => {
+          this.debug('Connection lost; reconnecting');
+          await this.connect();
+          await this.login(login);
+          this.emit('reconnect');
+        })().finally(() => {
+          this.reconnecting = null;
+        });
+      }
+      await this.reconnecting;
+      return;
+    }
+    throw new EppConnectionError('Not connected to an EPP server. Call connect() and login() first.');
+  }
+
+  /**
+   * Require each extension element to declare its namespace, and reject
+   * extensions that were not announced at login (RFC 5730 Section 2.9.1.1).
+   */
+  private checkExtensions(extensions: XmlElement[]): void {
+    for (const extension of extensions) {
+      const prefix = extension.name.includes(':') ? extension.name.split(':')[0] : '';
+      const attribute = prefix ? `xmlns:${prefix}` : 'xmlns';
+      const uri = extension.attrs[attribute];
+      if (!uri) {
+        throw new EppValidationError(`Extension element <${extension.name}> must declare its namespace with a ${attribute} attribute`);
+      }
+      if (this.services && !this.services.extURIs.includes(uri)) {
+        throw new EppValidationError(
+          `Extension ${uri} was not announced at login (announced: ${this.services.extURIs.join(', ') || 'none'})`,
+        );
+      }
+    }
+  }
+
+  private readGreeting(xml: string): Greeting {
+    const greeting = parseEppDocument(xml).child(NS.epp, 'greeting');
+    if (!greeting) throw new EppProtocolError('Expected an EPP <greeting>', xml);
+    return parseGreeting(greeting);
+  }
+
+  private nextClTRID(): string {
+    if (this.config.generateClTRID) {
+      const id = this.config.generateClTRID();
+      if (typeof id !== 'string' || id.length < 3 || id.length > 64 || /\s/.test(id)) {
+        throw new EppValidationError('generateClTRID must return 3-64 characters without spaces (RFC 5730 trIDStringType)');
+      }
+      return id;
+    }
+    this.clTRIDCounter = (this.clTRIDCounter + 1) % 0x7fffffff;
+    return `${this.config.clTRIDPrefix}-${Date.now().toString(36)}-${this.clTRIDCounter.toString(36)}-${randomBytes(3).toString('hex')}`;
+  }
+
+  private userAgent(): UserAgent | undefined {
+    if (this.config.userAgent === false) return undefined;
+    return this.config.userAgent ?? { app: `epp-ts ${VERSION}`, tech: `Node.js ${process.version}` };
+  }
+
+  private scheduleKeepAlive(): void {
+    this.stopKeepAlive();
+    const interval = this.config.keepAliveInterval;
+    if (!interval || interval <= 0 || !this.loggedIn || !this.connected) return;
+    this.keepAliveTimer = setTimeout(() => {
+      this.keepAliveTimer = null;
+      this.hello().catch((error: Error) => this.warn(`Keep-alive <hello> failed: ${error.message}`));
+    }, interval);
+    this.keepAliveTimer.unref();
+  }
+
+  private stopKeepAlive(): void {
+    if (this.keepAliveTimer) {
+      clearTimeout(this.keepAliveTimer);
+      this.keepAliveTimer = null;
+    }
+  }
+
+  private debug(message: string): void {
+    this.logger?.debug(message);
+  }
+
+  private warn(message: string): void {
+    if (this.logger?.warn) this.logger.warn(message);
+    else this.logger?.debug(message);
+  }
+}
+
+const consoleLogger: EppLogger = {
+  debug: (message) => console.debug(`[epp] ${message}`),
+  warn: (message) => console.warn(`[epp] ${message}`),
+};
+
+function resData<T>(ns: string, name: string, parse: (node: XmlNode) => T): (parsed: ParsedResponse) => T | undefined {
+  return (parsed) => (parsed.resData?.is(ns, name) ? parse(parsed.resData) : undefined);
+}
+
+/**
+ * Message for a Node.js error, including its code. Connection attempts to
+ * several addresses fail with an AggregateError whose own message is empty.
+ */
+function describeError(error: Error): string {
+  const code = (error as NodeJS.ErrnoException).code;
+  if (error.message) return code && !error.message.includes(code) ? `${error.message} (${code})` : error.message;
+  const inner = (error as Error & { errors?: unknown[] }).errors;
+  if (Array.isArray(inner) && inner.length > 0) return inner.map((e) => describeError(e as Error)).join('; ');
+  return code ?? error.name;
 }

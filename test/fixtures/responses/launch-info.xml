@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <response>
+    <result code="1000"><msg>Command completed successfully</msg></result>
+    <resData>
+      <domain:infData xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
+        <domain:name>example.tld</domain:name>
+        <domain:roid>EXAMPLE1-REP</domain:roid>
+        <domain:status s="pendingCreate"/>
+        <domain:clID>ClientX</domain:clID>
+      </domain:infData>
+    </resData>
+    <extension>
+      <launch:infData xmlns:launch="urn:ietf:params:xml:ns:launch-1.0">
+        <launch:phase>sunrise</launch:phase>
+        <launch:applicationID>abc123</launch:applicationID>
+        <launch:status s="pendingValidation"/>
+        <mark:mark xmlns:mark="urn:ietf:params:xml:ns:mark-1.0">
+          <mark:trademark>
+            <mark:id>1234-2</mark:id>
+            <mark:markName>Example One</mark:markName>
+            <mark:holder entitlement="owner">
+              <mark:org>Example Inc.</mark:org>
+              <mark:addr>
+                <mark:street>123 Example Dr.</mark:street>
+                <mark:city>Reston</mark:city>
+                <mark:sp>VA</mark:sp>
+                <mark:pc>20190</mark:pc>
+                <mark:cc>US</mark:cc>
+              </mark:addr>
+            </mark:holder>
+            <mark:jurisdiction>US</mark:jurisdiction>
+            <mark:class>35</mark:class>
+            <mark:class>36</mark:class>
+            <mark:label>example-one</mark:label>
+            <mark:goodsAndServices>Dirigendas et eiusmodi featuring infringo in airfare et cartam servicia.</mark:goodsAndServices>
+            <mark:regNum>234235</mark:regNum>
+            <mark:regDate>2009-08-16T09:00:00.0Z</mark:regDate>
+            <mark:exDate>2015-08-16T09:00:00.0Z</mark:exDate>
+          </mark:trademark>
+        </mark:mark>
+      </launch:infData>
+    </extension>
+    <trID><clTRID>ABC-12345</clTRID><svTRID>54321-XYZ</svTRID></trID>
+  </response>
+</epp>

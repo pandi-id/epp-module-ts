@@ -1,417 +1,148 @@
 /**
- * Domain Transfer Example
- * 
- * Demonstrasi lengkap proses domain transfer menggunakan EPP Client
- * Referensi: RFC 5731 Section 3.2.4 - EPP <transfer> Command
+ * Domain transfer between registrars (RFC 5731 Section 3.2.4).
+ *
+ * The gaining registrar requests the transfer with the domain's authInfo;
+ * the losing (sponsoring) registrar approves or rejects it, or the server
+ * approves it automatically when the pending period ends. Both sides learn
+ * the outcome from the poll queue.
+ *
+ * Each scenario runs one step, so nothing happens unless you ask for it.
+ * Use your registry's OT&E environment.
  */
 
-import { EppClient } from '../src/index';
-import { DomainTransferRequest } from '../src/types';
+import { EppClient, EppCommandError, EppResultCode, EppStatus } from '../src';
+import type { DomainTransferResult } from '../src';
+import { exitWithUsage, run, Scenario } from './config';
+
+const USAGE = `Usage: npm run example:transfer -- <scenario> [arguments]
+
+  query   [domain] [authInfo]           Transfer status, for either registrar (default)
+  request <domain> <authInfo> [years]   Gaining registrar: check the domain, then request the transfer
+  approve <domain>                      Losing registrar: approve a pending transfer
+  reject  <domain>                      Losing registrar: reject a pending transfer
+  cancel  <domain>                      Gaining registrar: withdraw its pending request
+  poll                                  Show and acknowledge transfer messages from the poll queue`;
+
+/** Statuses that make a transfer request fail (RFC 5731 Section 2.3). */
+const BLOCKING_STATUSES: string[] = [
+  EppStatus.CLIENT_TRANSFER_PROHIBITED,
+  EppStatus.SERVER_TRANSFER_PROHIBITED,
+  EppStatus.PENDING_TRANSFER,
+  EppStatus.PENDING_DELETE,
+];
+
+/** Print transfer data (RFC 5731 Section 3.1.3). */
+function printTransfer(transfer: DomainTransferResult | undefined): void {
+  if (!transfer) return;
+  const pending = transfer.trStatus === 'pending';
+  console.log(`  ${transfer.name}: ${transfer.trStatus}`);
+  console.log(`  requested by ${transfer.reID} on ${transfer.reDate}`);
+  // For a pending transfer, acDate is the deadline before the server acts on its own.
+  console.log(`  ${pending ? 'awaiting' : 'completed by'} ${transfer.acID} ${pending ? 'until' : 'on'} ${transfer.acDate}`);
+  if (transfer.exDate) console.log(`  expiry date after the transfer: ${transfer.exDate}`);
+}
 
 /**
- * GAINING REGISTRAR: Request domain transfer
- * 
- * Referensi: RFC 5731 Section 3.2.4
- * - Transfer request initiates transfer proses
- * - Requires authorization code dari losing registrar
- * - Optional renewal period
+ * Gaining registrar: look at the domain with the authInfo the registrant
+ * provided (RFC 5731 Section 3.1.2), then request the transfer. The server
+ * answers 1001: the request is pending until the losing registrar or the
+ * server acts on it.
  */
-async function gainingRegistrarRequestTransfer() {
-  const client = new EppClient({
-    host: 'epp.gaining-registrar.example', port: 700,
-    username: 'gaining-registrar-id',
-    password: 'password',
-    debug: true
-  });
+async function request(client: EppClient, domain: string, authInfo: string, years: number): Promise<void> {
+  const { data: info } = await client.domainInfo(domain, { authInfo });
+  if (info) {
+    console.log(`${info.name}: sponsored by ${info.clID}, expires ${info.exDate ?? '-'}, status ${info.status.join(', ')}`);
+    const blocking = info.status.filter((status) => BLOCKING_STATUSES.includes(status));
+    if (blocking.length > 0) {
+      console.log(`Not transferable now: ${blocking.join(', ')}`);
+      return;
+    }
+  }
+  // The period is added to the registration on completion; registry policy
+  // may also refuse recently created or transferred domains (2304 or 2106).
+  const res = await client.domainTransfer({ name: domain, op: 'request', period: years, authInfo: { pw: authInfo } });
+  console.log(`Transfer requested: ${res.code} ${res.message}`);
+  printTransfer(res.data);
+}
 
+/** Either registrar: the status of the latest transfer of the domain. */
+async function query(client: EppClient, domain: string, authInfo?: string): Promise<void> {
   try {
-    console.log('\n=== GAINING REGISTRAR: REQUEST TRANSFER ===\n');
-
-    // Login
-    await client.login();
-    console.log('✅ Logged in as gaining registrar');
-
-    // Domain yang akan ditransfer
-    const domainName = 'example.com';
-    
-    // Authorization code dari losing registrar
-    // Referensi: RFC 5731 Section 2.2 - Authorization Information
-    const authCode = 'auth-code-from-losing-registrar-2024';
-
-    // Request transfer
-    // Referensi: RFC 5731 Section 3.2.4.1
-    const transferRequest: DomainTransferRequest = {
-      name: domainName,
-      op: 'request', // Initiate transfer
-      authInfo: {
-        pw: authCode
-      },
-      // Optional: Add renewal period
-      // Some registries require renewal on transfer
-      period: {
-        value: 1,
-        unit: 'y'
-      }
-    };
-
-    const result = await client.domainTransfer(transferRequest);
-    
-    console.log('✅ Transfer requested successfully!');
-    console.log(`   Domain: ${domainName}`);
-    console.log(`   Status: ${result.code === 1001 ? 'Pending' : 'Completed'}`);
-    console.log(`   Transaction ID: ${result.svTRID}`);
-    
-    if (result.data) {
-      console.log('\n   Transfer Details:');
-      console.log(`   - Transfer Status: ${result.data.trStatus}`);
-      console.log(`   - Request Date: ${result.data.reDate}`);
-      console.log(`   - Request Client: ${result.data.reID}`);
-      if (result.data.acDate) {
-        console.log(`   - Action Date: ${result.data.acDate}`);
-      }
-    }
-
-    // Logout
-    await client.logout();
-    console.log('\n✅ Logged out');
-
-  } catch (error: any) {
-    console.error('\n❌ Transfer request failed:', error.message);
-    if (error.code === 2202) {
-      console.error('   → Invalid authorization code');
-    } else if (error.code === 2304) {
-      console.error('   → Domain status prohibits transfer');
-      console.error('   → Check: clientTransferProhibited, serverTransferProhibited');
-    }
+    const res = await client.domainTransfer({ name: domain, op: 'query', authInfo: authInfo ? { pw: authInfo } : undefined });
+    printTransfer(res.data);
+  } catch (error) {
+    if (!(error instanceof EppCommandError && error.code === EppResultCode.OBJECT_NOT_PENDING_TRANSFER)) throw error;
+    console.log(`No transfer of ${domain} on record (2301)`);
   }
 }
 
 /**
- * GAINING REGISTRAR: Query transfer status
- * 
- * Referensi: RFC 5731 Section 3.2.4.2
+ * The losing registrar approves or rejects a pending transfer; the gaining
+ * registrar can cancel its own request. 2301 means nothing is pending.
  */
-async function gainingRegistrarQueryTransfer() {
-  const client = new EppClient({
-    host: 'epp.gaining-registrar.example', port: 700,
-    username: 'gaining-registrar-id',
-    password: 'password'
-  });
+async function respond(client: EppClient, domain: string, op: 'approve' | 'reject' | 'cancel'): Promise<void> {
+  const res = await client.domainTransfer({ name: domain, op });
+  console.log(`Transfer ${op}: ${res.code} ${res.message}`);
+  printTransfer(res.data);
+}
 
-  try {
-    console.log('\n=== GAINING REGISTRAR: QUERY TRANSFER STATUS ===\n');
-
-    await client.login();
-    console.log('✅ Logged in');
-
-    const domainName = 'example.com';
-
-    // Query transfer status
-    const queryRequest: DomainTransferRequest = {
-      name: domainName,
-      op: 'query' // Query current transfer status
-    };
-
-    const result = await client.domainTransfer(queryRequest);
-    
-    console.log('✅ Transfer status retrieved:');
-    console.log(`   Domain: ${domainName}`);
-    
-    if (result.data) {
-      console.log(`   Transfer Status: ${result.data.trStatus}`);
-      console.log(`   Requested by: ${result.data.reID}`);
-      console.log(`   Request Date: ${result.data.reDate}`);
-      
-      // Possible transfer statuses (RFC 5731 Section 3.2.4):
-      // - pending: Transfer awaiting action
-      // - clientApproved: Approved by client
-      // - clientRejected: Rejected by client
-      // - clientCancelled: Cancelled by client
-      // - serverApproved: Auto-approved by server (timeout)
-      // - serverCancelled: Cancelled by server
-      
-      switch (result.data.trStatus) {
-        case 'pending':
-          console.log('   → Transfer is pending approval/rejection');
-          console.log('   → Auto-approval after 5 days (typical)');
-          break;
-        case 'clientApproved':
-          console.log('   → Transfer approved by losing registrar');
-          break;
-        case 'clientRejected':
-          console.log('   → Transfer rejected by losing registrar');
-          break;
-      }
+/**
+ * Read transfer notifications (RFC 5730 Section 2.9.2.3). The losing
+ * registrar gets "pending" when a transfer is requested; both sides get the
+ * final status. Stops at the first other kind of message, which
+ * poll-queue.ts handles, so no message is acknowledged unread.
+ */
+async function transferMessages(client: EppClient): Promise<void> {
+  let previousId: string | undefined;
+  for (;;) {
+    const res = await client.poll('req');
+    if (!res.msgQ) {
+      console.log('No more messages');
+      return;
     }
-
-    await client.logout();
-
-  } catch (error: any) {
-    console.error('\n❌ Query failed:', error.message);
+    if (res.msgQ.id === previousId) throw new Error(`Message ${previousId} is still queued after its acknowledgement`);
+    previousId = res.msgQ.id;
+    if (res.data?.type !== 'domain:trnData') {
+      console.log(`Message ${res.msgQ.id} is not a domain transfer notification; run poll-queue.ts to process it`);
+      return;
+    }
+    console.log(`\nMessage ${res.msgQ.id} (${res.msgQ.count} queued): ${res.msgQ.message ?? ''}`);
+    printTransfer(res.data.value);
+    if (res.data.value.trStatus === 'pending') {
+      console.log('  -> as the losing registrar, approve or reject before the deadline, or the server approves it');
+    }
+    await client.poll('ack', res.msgQ.id);
   }
 }
 
-/**
- * GAINING REGISTRAR: Cancel transfer request
- * 
- * Referensi: RFC 5731 Section 3.2.4.3
- * Gaining registrar dapat cancel pending transfer
- */
-async function gainingRegistrarCancelTransfer() {
-  const client = new EppClient({
-    host: 'epp.gaining-registrar.example', port: 700,
-    username: 'gaining-registrar-id',
-    password: 'password'
-  });
+function need(value: string | undefined, what: string): string {
+  return value ?? exitWithUsage(USAGE, `Missing ${what}.`);
+}
 
-  try {
-    console.log('\n=== GAINING REGISTRAR: CANCEL TRANSFER ===\n');
-
-    await client.login();
-    console.log('✅ Logged in');
-
-    const domainName = 'example.com';
-
-    // Cancel transfer request
-    const cancelRequest: DomainTransferRequest = {
-      name: domainName,
-      op: 'cancel' // Cancel pending transfer
-    };
-
-    const result = await client.domainTransfer(cancelRequest);
-    
-    console.log('✅ Transfer cancelled successfully');
-    console.log(`   Domain: ${domainName}`);
-    console.log(`   Transaction ID: ${result.svTRID}`);
-
-    await client.logout();
-
-  } catch (error: any) {
-    console.error('\n❌ Cancel failed:', error.message);
-    if (error.code === 2301) {
-      console.error('   → No pending transfer to cancel');
+/** Parse the command line before connecting, so usage errors cost no session. */
+function selectScenario(): Scenario {
+  const [name = 'query', domain, authInfo, years = '1'] = process.argv.slice(2);
+  switch (name) {
+    case 'query':
+      return (client) => query(client, domain ?? 'example.tld', authInfo);
+    case 'request': {
+      const target = need(domain, 'domain');
+      const code = need(authInfo, 'authInfo');
+      const period = Number(years);
+      if (!Number.isInteger(period) || period < 1 || period > 10) exitWithUsage(USAGE, 'years must be a whole number from 1 to 10.');
+      return (client) => request(client, target, code, period);
     }
+    case 'approve':
+    case 'reject':
+    case 'cancel': {
+      const target = need(domain, 'domain');
+      return (client) => respond(client, target, name);
+    }
+    case 'poll':
+      return transferMessages;
+    default:
+      return exitWithUsage(USAGE, `Unknown scenario "${name}".`);
   }
 }
 
-/**
- * LOSING REGISTRAR: Approve transfer
- * 
- * Referensi: RFC 5731 Section 3.2.4.4
- * Losing registrar dapat approve transfer untuk expedite process
- */
-async function losingRegistrarApproveTransfer() {
-  const client = new EppClient({
-    host: 'epp.losing-registrar.example', port: 700,
-    username: 'losing-registrar-id',
-    password: 'password'
-  });
-
-  try {
-    console.log('\n=== LOSING REGISTRAR: APPROVE TRANSFER ===\n');
-
-    await client.login();
-    console.log('✅ Logged in as losing registrar');
-
-    const domainName = 'example.com';
-
-    // Approve transfer
-    const approveRequest: DomainTransferRequest = {
-      name: domainName,
-      op: 'approve' // Approve pending transfer
-    };
-
-    const result = await client.domainTransfer(approveRequest);
-    
-    console.log('✅ Transfer approved successfully');
-    console.log(`   Domain: ${domainName}`);
-    console.log('   → Transfer will complete immediately');
-    console.log(`   Transaction ID: ${result.svTRID}`);
-
-    await client.logout();
-
-  } catch (error: any) {
-    console.error('\n❌ Approve failed:', error.message);
-    if (error.code === 2301) {
-      console.error('   → No pending transfer to approve');
-    }
-  }
-}
-
-/**
- * LOSING REGISTRAR: Reject transfer
- * 
- * Referensi: RFC 5731 Section 3.2.4.5
- * Losing registrar dapat reject transfer (biasanya pada customer request)
- */
-async function losingRegistrarRejectTransfer() {
-  const client = new EppClient({
-    host: 'epp.losing-registrar.example', port: 700,
-    username: 'losing-registrar-id',
-    password: 'password'
-  });
-
-  try {
-    console.log('\n=== LOSING REGISTRAR: REJECT TRANSFER ===\n');
-
-    await client.login();
-    console.log('✅ Logged in as losing registrar');
-
-    const domainName = 'example.com';
-
-    // Reject transfer
-    const rejectRequest: DomainTransferRequest = {
-      name: domainName,
-      op: 'reject' // Reject pending transfer
-    };
-
-    const result = await client.domainTransfer(rejectRequest);
-    
-    console.log('✅ Transfer rejected successfully');
-    console.log(`   Domain: ${domainName}`);
-    console.log('   → Domain remains with losing registrar');
-    console.log(`   Transaction ID: ${result.svTRID}`);
-
-    await client.logout();
-
-  } catch (error: any) {
-    console.error('\n❌ Reject failed:', error.message);
-    if (error.code === 2301) {
-      console.error('   → No pending transfer to reject');
-    }
-  }
-}
-
-/**
- * Complete transfer flow demonstration
- */
-async function completeTransferFlow() {
-  console.log('\n╔════════════════════════════════════════════════════════╗');
-  console.log('║       DOMAIN TRANSFER COMPLETE FLOW EXAMPLE            ║');
-  console.log('║       RFC 5731 Section 3.2.4 - Transfer Command        ║');
-  console.log('╚════════════════════════════════════════════════════════╝');
-
-  // SCENARIO 1: Successful transfer dengan auto-approval
-  console.log('\n📋 SCENARIO 1: Request Transfer (Auto-Approval)');
-  console.log('─'.repeat(60));
-  await gainingRegistrarRequestTransfer();
-  
-  await sleep(2000); // Simulate time passing
-  
-  console.log('\n📋 Check Transfer Status');
-  console.log('─'.repeat(60));
-  await gainingRegistrarQueryTransfer();
-
-  // SCENARIO 2: Transfer dengan explicit approval
-  console.log('\n\n📋 SCENARIO 2: Transfer dengan Losing Registrar Approval');
-  console.log('─'.repeat(60));
-  await gainingRegistrarRequestTransfer();
-  
-  await sleep(1000);
-  
-  console.log('\n📋 Losing Registrar Approves Transfer');
-  console.log('─'.repeat(60));
-  await losingRegistrarApproveTransfer();
-
-  // SCENARIO 3: Transfer rejection
-  console.log('\n\n📋 SCENARIO 3: Transfer Rejection');
-  console.log('─'.repeat(60));
-  await gainingRegistrarRequestTransfer();
-  
-  await sleep(1000);
-  
-  console.log('\n📋 Losing Registrar Rejects Transfer');
-  console.log('─'.repeat(60));
-  await losingRegistrarRejectTransfer();
-
-  // SCENARIO 4: Transfer cancellation
-  console.log('\n\n📋 SCENARIO 4: Transfer Cancellation');
-  console.log('─'.repeat(60));
-  await gainingRegistrarRequestTransfer();
-  
-  await sleep(1000);
-  
-  console.log('\n📋 Gaining Registrar Cancels Transfer');
-  console.log('─'.repeat(60));
-  await gainingRegistrarCancelTransfer();
-
-  console.log('\n\n╔════════════════════════════════════════════════════════╗');
-  console.log('║             TRANSFER FLOW DEMONSTRATION COMPLETE       ║');
-  console.log('╚════════════════════════════════════════════════════════╝\n');
-}
-
-// Helper function
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-/**
- * Transfer Best Practices dan Notes
- */
-function printTransferBestPractices() {
-  console.log('\n╔════════════════════════════════════════════════════════╗');
-  console.log('║          DOMAIN TRANSFER BEST PRACTICES                ║');
-  console.log('╚════════════════════════════════════════════════════════╝\n');
-
-  console.log('📌 BEFORE INITIATING TRANSFER:\n');
-  console.log('   1. Verify domain tidak memiliki transfer prohibit status:');
-  console.log('      - clientTransferProhibited');
-  console.log('      - serverTransferProhibited');
-  console.log('   2. Obtain valid authorization code dari losing registrar');
-  console.log('   3. Unlock domain (remove clientTransferProhibited)');
-  console.log('   4. Ensure domain tidak dalam redemption period');
-  console.log('   5. Check domain belum expired\n');
-
-  console.log('📌 TRANSFER TIMELINE (RFC 5731):\n');
-  console.log('   - Day 0: Transfer request submitted');
-  console.log('   - Day 0-5: Pending approval period');
-  console.log('   - Day 5: Auto-approval (jika tidak ada action)');
-  console.log('   - Transfer dapat approved/rejected sewaktu-waktu');
-  console.log('   - Gaining registrar dapat cancel before approval\n');
-
-  console.log('📌 TRANSFER RESULT CODES:\n');
-  console.log('   - 1000: Transfer query successful');
-  console.log('   - 1001: Transfer command pending');
-  console.log('   - 2002: Invalid authorization information');
-  console.log('   - 2201: Authorization error');
-  console.log('   - 2300: Object pending transfer (duplicate request)');
-  console.log('   - 2301: Object not pending transfer');
-  console.log('   - 2304: Object status prohibits operation\n');
-
-  console.log('📌 AUTHORIZATION CODE SECURITY:\n');
-  console.log('   - Keep auth codes confidential');
-  console.log('   - Use strong, random auth codes');
-  console.log('   - Minimum 8 characters recommended');
-  console.log('   - Change auth code after transfer');
-  console.log('   - Transmit only via secure channels\n');
-
-  console.log('📌 REGISTRY-SPECIFIC POLICIES:\n');
-  console.log('   - Some registries auto-approve after 5 days');
-  console.log('   - Some require explicit approval');
-  console.log('   - Transfer may add 1 year to registration');
-  console.log('   - Check registry transfer policy documentation\n');
-}
-
-// Export functions untuk testing
-export {
-  gainingRegistrarRequestTransfer,
-  gainingRegistrarQueryTransfer,
-  gainingRegistrarCancelTransfer,
-  losingRegistrarApproveTransfer,
-  losingRegistrarRejectTransfer,
-  completeTransferFlow,
-  printTransferBestPractices
-};
-
-// Run jika dijalankan directly
-if (typeof require !== 'undefined' && require.main === module) {
-  printTransferBestPractices();
-  
-  completeTransferFlow()
-    .then(() => {
-      console.log('✨ Transfer examples completed\n');
-    })
-    .catch((error) => {
-      console.error('💥 Fatal error:', error);
-    });
-}
+void run(selectScenario());

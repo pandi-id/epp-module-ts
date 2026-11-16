@@ -1,167 +1,163 @@
 /**
- * EPP Types Index
- * 
- * Mengexport semua TypeScript types untuk EPP Client
- * Berdasarkan RFC 5730-5734 (EPP Protocol Standards)
+ * Public types and helpers of the EPP mappings (RFC 5730-5733) and
+ * extensions (RFC 3915, 5910, 7848, 8334, 8495, 8590, 8748, 8807, 9361).
  */
 
-// Common Types (RFC 5730)
 export type {
-  EppConfig,
-  EppResponse,
-  EppError,
-  SessionOptions,
-  FeeCheckRequest,
-  Period,
   AuthInfo,
-  PollRequest,
-  PollMessage,
-  PollResponse
+  ChangePollData,
+  CommandOptions,
+  DataCollectionPolicy,
+  EppConfig,
+  EppLogger,
+  EppResponse,
+  EppResult,
+  Greeting,
+  LoginOptions,
+  LoginSecEvent,
+  MessageQueue,
+  ObjectStatus,
+  PendingActionResult,
+  Period,
+  PeriodInput,
+  PollMessageData,
+  ResponseExtensions,
+  StatusInput,
+  TransactionIds,
+  TransferOp,
+  TransferStatus,
+  UserAgent,
 } from './Common';
 
-// Domain Types (RFC 5731)
 export type {
-  DomainCheckRequest,
+  DomainAddRemove,
+  DomainCheckOptions,
   DomainCheckResult,
-  DomainCreateRequest,
-  DomainUpdateRequest,
-  DomainRenewRequest,
-  DomainTransferRequest,
-  DomainInfo,
   DomainContact,
+  DomainCreateRequest,
+  DomainCreateResult,
+  DomainDeleteOptions,
+  DomainInfo,
+  DomainInfoOptions,
+  DomainRenewRequest,
+  DomainRenewResult,
+  DomainRestoreOptions,
+  DomainTransferRequest,
+  DomainTransferResult,
+  DomainUpdateRequest,
+  HostAttr,
+  IpAddress,
   NameServer,
-  IpAddress
+  NameServerInput,
 } from './Domain';
 
-// Contact Types (RFC 5733)
 export type {
-  ContactCreateRequest,
-  ContactUpdateRequest,
-  ContactCheckResult,
-  ContactTransferRequest,
-  ContactInfo,
-  ContactPostalInfo,
   ContactAddress,
+  ContactCheckResult,
+  ContactCreateRequest,
+  ContactCreateResult,
   ContactDisclose,
-  PostalInfoType
+  ContactDiscloseInfo,
+  ContactInfo,
+  ContactInfoOptions,
+  ContactPhone,
+  ContactPostalInfo,
+  ContactPostalInfoChange,
+  ContactTransferRequest,
+  ContactTransferResult,
+  ContactUpdateRequest,
+  DiscloseTypes,
+  PostalInfoType,
 } from './Contact';
 
-// Host Types (RFC 5732)
 export type {
-  HostCreateRequest,
-  HostUpdateRequest,
-  HostCheckRequest,
+  HostAddRemove,
+  HostAddress,
   HostCheckResult,
+  HostCreateRequest,
+  HostCreateResult,
   HostInfo,
-  HostAddress
+  HostUpdateRequest,
 } from './Host';
 
-// DNSSEC Types (RFC 5910)
-export type {
-  DsData,
-  KeyData,
-  DnssecCreate,
-  DnssecUpdate,
-  DnssecInfo
-} from './Dnssec';
+export type { DnssecCreate, DnssecInfo, DnssecUpdate, DsData, KeyData } from './Dnssec';
+export { DNSSEC_ALGORITHMS, DNSSEC_DIGEST_TYPES, validateDsData, validateKeyData } from './Dnssec';
 
-export {
-  DNSSEC_ALGORITHMS,
-  DNSSEC_DIGEST_TYPES,
-  validateDsData,
-  validateKeyData
-} from './Dnssec';
-
-// EPP Launch Extension (RFC 8334)
 export type {
+  LaunchCheck,
+  LaunchCheckData,
+  LaunchCheckResult,
+  LaunchClaimKey,
+  LaunchCodeMark,
+  LaunchCreate,
+  LaunchCreateData,
+  LaunchIdContainer,
+  LaunchInfoData,
+  LaunchInfoRequest,
+  LaunchNotice,
   LaunchPhase,
   LaunchStatus,
-  LaunchNotice,
-  SignedMarkData,
-  LaunchCreateRequest,
-  LaunchCheckRequest,
-  LaunchCheckResult,
-  LaunchInfo,
-  LaunchUpdateRequest,
-  LaunchDeleteRequest,
-  TradeMark
 } from './Launch';
+export { isValidLaunchPhase, isValidLaunchStatus, LAUNCH_NAMESPACE } from './Launch';
 
-export {
-  LAUNCH_NAMESPACE,
-  isValidLaunchPhase,
-  isValidLaunchStatus
-} from './Launch';
-
-// EPP TMCH Extension
 export type {
-  TmchMarkType,
-  TmchMark,
-  TmchHolder,
-  TmchContact,
+  SmdFile,
+  TmchClaim,
+  TmchClaimsCheckRequest,
+  TmchClaimsCheckResult,
   TmchClaimsNotice,
+  TmchContact,
+  TmchContactType,
+  TmchDocument,
+  TmchDocumentType,
+  TmchHolder,
+  TmchMark,
+  TmchMarkType,
   TmchSMD,
-  TmchValidationResult
+  TmchSunriseApplication,
+  TmchValidationResult,
 } from './Tmch';
-
 export {
-  TMCH_NAMESPACE,
-  isValidSMDFormat,
-  isValidNoticeID,
+  computeTcnChecksum,
+  extractEncodedSmd,
   isTmchMarkExpired,
-  isValidNiceClass
+  isValidNiceClass,
+  isValidNoticeID,
+  isValidSMDFormat,
+  MARK_NAMESPACE,
+  parseSmdFile,
+  SIGNED_MARK_NAMESPACE,
+  verifyTcnId,
 } from './Tmch';
 
-// EPP Fee Extension (RFC 8748)
 export type {
-  FeeCommand,
   Fee,
-  FeeCheckRequest as FeeExtCheckRequest,
-  FeeCheckResult as FeeExtCheckResult,
-  FeeInfo,
-  FeeCreateRequest,
-  FeeRenewRequest,
-  FeeTransferRequest,
-  FeeUpdateRequest,
-  FeeRestoreRequest,
-  FeeDeleteResponse,
+  FeeCheckCommand,
+  FeeCheckData,
+  FeeCheckExtension,
+  FeeCheckItem,
+  FeeCheckRequest,
+  FeeCommand,
+  FeeCommandName,
+  FeeCommandResult,
   FeeCredit,
-  FeeBalance
+  FeeCurrency,
+  FeePeriod,
+  FeeSubmission,
+  FeeTransformData,
 } from './Fee';
+export { calculateTotalFees, FEE_NAMESPACE, formatFeeAmount, isValidCurrencyCode, parseFeeAmount, parseGracePeriod, sumFeeAmounts } from './Fee';
 
+export type { GracePeriodConfig, RgpInfo, RgpRequestType, RgpRestoreReport, RgpStatement, RgpStatus, RgpStatusInfo } from './Rgp';
 export {
-  FEE_NAMESPACE,
-  FEE_NAMESPACE_0_11,
-  isValidCurrencyCode,
-  parseFeeAmount,
-  formatFeeAmount,
-  calculateTotalFees,
-  parseGracePeriod
-} from './Fee';
-
-// EPP RGP Extension (RFC 3915)
-export type {
-  RgpStatus,
-  RgpRequestType,
-  RgpReportType,
-  RgpStatusInfo,
-  RgpUpdateRequest,
-  RgpRestoreReport,
-  RgpStatement,
-  RgpInfo,
-  RgpPollMessage,
-  GracePeriodConfig
-} from './Rgp';
-
-export {
-  RGP_NAMESPACE,
+  calculateGracePeriodEnd,
+  canRestore,
   DEFAULT_GRACE_PERIODS,
+  getRemainingGracePeriodDays,
   isInGracePeriod,
   isInRedemption,
   isPendingDelete,
-  canRestore,
-  calculateGracePeriodEnd,
   isWithinGracePeriod,
-  getRemainingGracePeriodDays,
-  validateRestoreReport
+  RGP_NAMESPACE,
+  validateRestoreReport,
 } from './Rgp';

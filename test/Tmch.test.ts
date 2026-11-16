@@ -1,318 +1,172 @@
 /**
- * TMCH (Trademark Clearinghouse) Extension Tests
+ * TMCH helpers: RFC 7848 identifiers, RFC 9361 TCNIDs and SMD files.
  */
 
+import { EppValidationError } from '../src/core/Errors';
 import {
-  TmchMarkType,
-  TmchMark,
-  TmchSMD,
-  TmchClaimsNotice,
-  isValidSMDFormat,
-  isValidNoticeID,
+  computeTcnChecksum,
+  extractEncodedSmd,
   isTmchMarkExpired,
   isValidNiceClass,
-  TMCH_NAMESPACE
+  isValidNoticeID,
+  isValidSMDFormat,
+  MARK_NAMESPACE,
+  parseSmdFile,
+  SIGNED_MARK_NAMESPACE,
+  TmchClaimsNotice,
+  TmchMark,
+  TmchSMD,
+  verifyTcnId,
 } from '../src/types/Tmch';
 
-describe('TMCH Extension', () => {
-  describe('SMD Format Validation', () => {
-    test('should validate correct SMD format', () => {
-      expect(isValidSMDFormat('20240115-000001-0001')).toBe(true);
-      expect(isValidSMDFormat('20231201-123456-9999')).toBe(true);
-      expect(isValidSMDFormat('20250630-999999-0000')).toBe(true);
+const SMD_BASE64 = [
+  'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHNtZDpzaWdu',
+  'ZWRNYXJrIHhtbG5zOnNtZD0idXJuOmlldGY6cGFyYW1zOnhtbDpuczpzaWduZWRN',
+  'dXJlPgo8L3NtZDpzaWduZWRNYXJrPgo=',
+];
+
+// The example SMD file of RFC 9361 Section 6.4, with a shortened base64 body.
+const SMD_FILE = [
+  'Marks: Example One',
+  'smdID: 1-2',
+  'U-labels: example-one, exampleone',
+  'notBefore: 2011-08-16 09:00',
+  'notAfter: 2012-08-16 09:00',
+  '-----BEGIN ENCODED SMD-----',
+  ...SMD_BASE64,
+  '-----END ENCODED SMD-----',
+  '',
+].join('\n');
+
+const inOneYear = () => new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString();
+
+describe('TMCH helpers', () => {
+  describe('mark and SMD identifiers (RFC 7848)', () => {
+    test('accept the digits-hyphen-digits format', () => {
+      expect(isValidSMDFormat('1-2')).toBe(true);
+      expect(isValidSMDFormat('0000001751376056503931-65535')).toBe(true);
+      expect(isValidSMDFormat('00052013734689731373681096-65535')).toBe(true);
     });
 
-    test('should reject invalid SMD format', () => {
-      expect(isValidSMDFormat('2024-01-15-000001-0001')).toBe(false);
-      expect(isValidSMDFormat('20240115-0001-0001')).toBe(false);
-      expect(isValidSMDFormat('20240115-000001')).toBe(false);
-      expect(isValidSMDFormat('invalid-format')).toBe(false);
+    test('reject anything else', () => {
+      expect(isValidSMDFormat('20240115-000001-0001')).toBe(false);
+      expect(isValidSMDFormat('abc-1')).toBe(false);
+      expect(isValidSMDFormat('1-')).toBe(false);
+      expect(isValidSMDFormat('-1')).toBe(false);
       expect(isValidSMDFormat('')).toBe(false);
     });
   });
 
-  describe('Notice ID Validation', () => {
-    test('should validate correct notice ID format', () => {
-      // Format: YYYY-MM-DDTHH:mm:ss.sssZ-xxxxxxxx
-      expect(isValidNoticeID('2024-01-15T10:30:45.123Z-abc12345')).toBe(true);
-      expect(isValidNoticeID('2025-12-31T23:59:59.999Z-12345678')).toBe(true);
-      expect(isValidNoticeID('2024-06-15T00:00:00.000Z-ffffffff')).toBe(true);
+  describe('claims notice identifiers (RFC 9361 Section 6.5)', () => {
+    test('accept an 8-digit hex checksum followed by a 19-digit notice identifier', () => {
+      expect(isValidNoticeID('370d0b7c9223372036854775807')).toBe(true);
+      expect(isValidNoticeID('ABCDEF019223372036854775807')).toBe(true);
+      expect(isValidNoticeID('000000000000000000000000001')).toBe(true);
     });
 
-    test('should reject invalid notice ID', () => {
+    test('reject other formats', () => {
       expect(isValidNoticeID('')).toBe(false);
       expect(isValidNoticeID('   ')).toBe(false);
-      expect(isValidNoticeID('claim-notice-12345')).toBe(false); // Wrong format
-      expect(isValidNoticeID('2024-01-15-abc12345')).toBe(false); // Missing time
+      expect(isValidNoticeID('2024-01-15T10:30:45.123Z-abc12345')).toBe(false);
+      expect(isValidNoticeID('claim-notice-12345')).toBe(false);
+      expect(isValidNoticeID('370d0b7c922')).toBe(false);
+      expect(isValidNoticeID('zzzzzzzz9223372036854775807')).toBe(false);
+    });
+
+    test('compute the TCN checksum of the RFC 9361 example', () => {
+      expect(computeTcnChecksum('example-one', '2010-08-16T09:00:00.0Z', '9223372036854775807')).toBe('370d0b7c');
+      expect(computeTcnChecksum('example-one', new Date('2010-08-16T09:00:00Z'), '9223372036854775807')).toBe('370d0b7c');
+    });
+
+    test('verify a TCNID against the domain and notice expiry', () => {
+      expect(verifyTcnId('370d0b7c9223372036854775807', 'example-one.tld', '2010-08-16T09:00:00.0Z')).toBe(true);
+      expect(verifyTcnId('370D0B7C9223372036854775807', 'Example-One', '2010-08-16T09:00:00.0Z')).toBe(true);
+      expect(verifyTcnId('370d0b7c9223372036854775807', 'example-two.tld', '2010-08-16T09:00:00.0Z')).toBe(false);
+      expect(verifyTcnId('370d0b7c9223372036854775807', 'example-one.tld', '2010-08-16T09:00:01.0Z')).toBe(false);
+      expect(verifyTcnId('not-a-tcnid', 'example-one.tld', '2010-08-16T09:00:00.0Z')).toBe(false);
+      expect(() => computeTcnChecksum('example-one', 'never', '1')).toThrow(EppValidationError);
     });
   });
 
-  describe('Trademark Expiration Check', () => {
-    test('should detect expired trademarks', () => {
-      const pastDate = '2020-01-01T00:00:00Z';
-      expect(isTmchMarkExpired(pastDate)).toBe(true);
+  describe('SMD files (RFC 9361 Section 6.4)', () => {
+    test('parse the header lines and the encoded SMD', () => {
+      expect(parseSmdFile(SMD_FILE)).toEqual({
+        marks: 'Example One',
+        smdID: '1-2',
+        uLabels: ['example-one', 'exampleone'],
+        notBefore: '2011-08-16 09:00',
+        notAfter: '2012-08-16 09:00',
+        encodedSignedMark: SMD_BASE64.join(''),
+      });
     });
 
-    test('should detect non-expired trademarks', () => {
-      const futureDate = '2030-12-31T23:59:59Z';
-      expect(isTmchMarkExpired(futureDate)).toBe(false);
+    test('extract only the data between the boundaries', () => {
+      expect(extractEncodedSmd(`ignored preamble\n${SMD_FILE}trailing text`)).toBe(SMD_BASE64.join(''));
+      expect(extractEncodedSmd(SMD_BASE64.join('\n'))).toBe(SMD_BASE64.join(''));
     });
 
-    test('should handle date in the past', () => {
-      const yesterday = new Date();
-      yesterday.setDate(yesterday.getDate() - 1);
+    test('reject files without an encoded SMD or header lines', () => {
+      expect(() => extractEncodedSmd('Marks: Example One\nno data here!')).toThrow(EppValidationError);
+      expect(() => extractEncodedSmd('-----BEGIN ENCODED SMD-----\nAAAA')).toThrow(/END ENCODED SMD/);
+      expect(() => extractEncodedSmd('-----BEGIN ENCODED SMD-----\n***\n-----END ENCODED SMD-----')).toThrow(/base64/);
+      expect(() => parseSmdFile(SMD_FILE.replace('smdID: 1-2\n', ''))).toThrow(/smdID/);
+    });
+  });
+
+  describe('expiration and Nice classes', () => {
+    test('detect expired and current marks', () => {
+      expect(isTmchMarkExpired('2020-01-01T00:00:00Z')).toBe(true);
+      expect(isTmchMarkExpired(inOneYear())).toBe(false);
+      const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
       expect(isTmchMarkExpired(yesterday.toISOString())).toBe(true);
     });
-  });
 
-  describe('Nice Classification Validation', () => {
-    test('should validate valid Nice classes', () => {
-      expect(isValidNiceClass(1)).toBe(true);
-      expect(isValidNiceClass(35)).toBe(true);
-      expect(isValidNiceClass(42)).toBe(true);
-      expect(isValidNiceClass(45)).toBe(true);
-    });
-
-    test('should reject invalid Nice classes', () => {
-      expect(isValidNiceClass(0)).toBe(false);
-      expect(isValidNiceClass(46)).toBe(false);
-      expect(isValidNiceClass(-1)).toBe(false);
-      expect(isValidNiceClass(100)).toBe(false);
+    test('accept Nice classes 1-45 only', () => {
+      for (const valid of [1, 35, 42, 45]) expect(isValidNiceClass(valid)).toBe(true);
+      for (const invalid of [0, 46, -1, 100, 1.5]) expect(isValidNiceClass(invalid)).toBe(false);
     });
   });
 
-  describe('TmchMark Structure', () => {
-    test('should create complete trademark mark', () => {
-      const mark: TmchMark = {
-        id: 'mark-12345',
-        markType: 'trademark',
-        markName: 'EXAMPLE',
-        holder: [
-          {
-            name: 'Example Corp',
-            org: 'Example Corporation',
-            addr: {
-              street: ['123 Main St'],
-              city: 'New York',
-              pc: '10001',
-              cc: 'US'
-            },
-            email: 'contact@example.com'
-          }
-        ],
-        jurisdiction: 'US',
-        class: [35, 42],
-        regNum: '1234567',
-        regDate: '2020-01-15',
-        exDate: '2030-01-15'
-      };
-
-      expect(mark.markType).toBe('trademark');
-      expect(mark.markName).toBe('EXAMPLE');
-      expect(mark.class).toHaveLength(2);
-      expect(isValidNiceClass(mark.class![0])).toBe(true);
-    });
-
-    test('should support treaty or statute type', () => {
-      const mark: TmchMark = {
-        id: 'mark-67890',
-        markType: 'treatyOrStatute',
-        markName: 'PROTECTED',
-        holder: [
-          {
-            name: 'Protected Corp',
-            addr: { cc: 'EU' }
-          }
-        ],
-        jurisdiction: 'EU'
-      };
-
-      expect(mark.markType).toBe('treatyOrStatute');
-      expect(mark.holder).toHaveLength(1);
-    });
-
-    test('should support court type', () => {
-      const mark: TmchMark = {
-        id: 'court-12345',
-        markType: 'court',
-        markName: 'COURTMARK',
-        holder: [
-          {
-            name: 'Court Holder',
-            addr: { cc: 'GB' }
-          }
-        ],
-        jurisdiction: 'GB'
-      };
-
-      expect(mark.markType).toBe('court');
-      expect(mark.jurisdiction).toBe('GB');
+  describe('namespaces', () => {
+    test('match RFC 7848', () => {
+      expect(MARK_NAMESPACE).toBe('urn:ietf:params:xml:ns:mark-1.0');
+      expect(SIGNED_MARK_NAMESPACE).toBe('urn:ietf:params:xml:ns:signedMark-1.0');
     });
   });
 
-  describe('TmchSMD Structure', () => {
-    test('should create valid SMD', () => {
-      const smd: TmchSMD = {
-        id: '20240115-000001-0001',
-        issuer: 'TMCH',
-        encodedSignedMark: 'PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4=',
-        notBefore: '2024-01-15T00:00:00Z',
-        notAfter: '2030-01-15T00:00:00Z'  // Future date
-      };
+  describe('types', () => {
+    test('describe marks of every kind', () => {
+      const marks: TmchMark[] = [
+        {
+          id: '00052013734689731373681096-65535',
+          markType: 'trademark',
+          markName: 'EXAMPLE',
+          holder: [{ org: 'Example Corporation', addr: { street: ['123 Main St'], city: 'New York', pc: '10001', cc: 'US' }, entitlement: 'owner' }],
+          jurisdiction: 'US',
+          class: [35, 42],
+          regNum: '1234567',
+          regDate: '2020-01-15',
+        },
+        { id: '1-2', markType: 'treatyOrStatute', markName: 'PROTECTED', holder: [{ name: 'Protected Corp', addr: { cc: 'FR' } }] },
+        { id: '3-4', markType: 'court', markName: 'COURTMARK', holder: [{ name: 'Court Holder', addr: { cc: 'GB' } }], jurisdiction: 'GB' },
+      ];
+      expect(marks.every((mark) => isValidSMDFormat(mark.id))).toBe(true);
+      expect(marks[0].class!.every(isValidNiceClass)).toBe(true);
+    });
 
+    test('describe an SMD and a claims notice', () => {
+      const smd: TmchSMD = { id: '1-2', issuer: 'TMCH', encodedSignedMark: SMD_BASE64.join(''), notBefore: '2024-01-15T00:00:00Z', notAfter: inOneYear() };
       expect(isValidSMDFormat(smd.id)).toBe(true);
       expect(isTmchMarkExpired(smd.notAfter)).toBe(false);
-    });
 
-    test('should detect expired SMD', () => {
-      const smd: TmchSMD = {
-        id: '20200115-000001-0001',
-        issuer: 'TMCH',
-        encodedSignedMark: 'base64data',
-        notBefore: '2020-01-15T00:00:00Z',
-        notAfter: '2021-01-15T00:00:00Z'
-      };
-
-      expect(isTmchMarkExpired(smd.notAfter)).toBe(true);
-    });
-  });
-
-  describe('TmchClaimsNotice Structure', () => {
-    test('should create valid claims notice', () => {
       const notice: TmchClaimsNotice = {
-        id: '2024-01-15T10:30:45.123Z-abc12345',
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:00:00Z',
-        label: 'example',
-        claims: [
-          {
-            markName: 'EXAMPLE',
-            jurisdiction: 'US',
-            goodsAndServices: 'Class 35: Advertising services'
-          }
-        ]
+        id: '370d0b7c9223372036854775807',
+        notAfter: '2010-08-16T09:00:00.0Z',
+        acceptedDate: '2010-08-15T09:00:00.0Z',
+        label: 'example-one',
+        claims: [{ markName: 'Example One', jurisdiction: 'US', goodsAndServices: 'Class 35' }],
       };
-
-      expect(isValidNoticeID(notice.id)).toBe(true);
-      expect(notice.claims).toHaveLength(1);
-      expect(notice.claims![0].markName).toBe('EXAMPLE');
-    });
-
-    test('should support multiple claims', () => {
-      const notice: TmchClaimsNotice = {
-        id: '2024-01-15T10:30:45.123Z-12345678',
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:00:00Z',
-        label: 'trademark',
-        claims: [
-          {
-            markName: 'TRADEMARK',
-            jurisdiction: 'US',
-            goodsAndServices: 'Class 35'
-          },
-          {
-            markName: 'TRADEMARK',
-            jurisdiction: 'EU',
-            goodsAndServices: 'Class 42'
-          }
-        ]
-      };
-
-      expect(notice.claims).toHaveLength(2);
-    });
-  });
-
-  describe('TmchHolder and TmchContact', () => {
-    test('should create trademark holder', () => {
-      const holder = {
-        name: 'Example Corporation',
-        org: 'Example Corp',
-        addr: {
-          street: ['123 Main St'],
-          city: 'New York',
-          pc: '10001',
-          cc: 'US'
-        },
-        voice: '+1.2125551234',
-        email: 'legal@example.com'
-      };
-
-      expect(holder.name).toBe('Example Corporation');
-      expect(holder.addr.cc).toBe('US');
-    });
-
-    test('should create contact with optional fields', () => {
-      const contact = {
-        name: 'John Doe',
-        org: 'Law Firm LLP',
-        addr: {
-          street: ['456 Legal Ave', 'Suite 100'],
-          city: 'London',
-          pc: 'SW1A 1AA',
-          cc: 'GB'
-        },
-        email: 'john@lawfirm.com'
-      };
-
-      expect(contact.addr.street).toHaveLength(2);
-      expect(contact.addr.cc).toBe('GB');
-    });
-  });
-
-  describe('Namespace', () => {
-    test('should have correct namespace URI', () => {
-      expect(TMCH_NAMESPACE).toBe('urn:ietf:params:xml:ns:tmch-1.0');
-    });
-  });
-
-  describe('Integration Tests', () => {
-    test('should validate complete SMD workflow', () => {
-      const smdId = '20240115-000001-0001';
-      const expirationDate = '2025-12-31T23:59:59Z';
-
-      // Validate format
-      expect(isValidSMDFormat(smdId)).toBe(true);
-
-      // Check expiration
-      expect(isTmchMarkExpired(expirationDate)).toBe(false);
-
-      // Create SMD
-      const smd: TmchSMD = {
-        id: smdId,
-        issuer: 'TMCH',
-        encodedSignedMark: 'encoded_data_here',
-        notBefore: '2024-01-15T00:00:00Z',
-        notAfter: expirationDate
-      };
-
-      expect(smd.id).toBe(smdId);
-      expect(smd.notAfter).toBe(expirationDate);
-    });
-
-    test('should validate claims notice workflow', () => {
-      const noticeId = '2024-01-15T10:30:45.123Z-12345678';
-
-      // Validate notice ID
-      expect(isValidNoticeID(noticeId)).toBe(true);
-
-      // Create notice with valid Nice classes
-      const notice: TmchClaimsNotice = {
-        id: noticeId,
-        notAfter: '2024-12-31T23:59:59Z',
-        acceptedDate: '2024-01-15T10:00:00Z',
-        label: 'example',
-        claims: [
-          {
-            markName: 'EXAMPLE',
-            jurisdiction: 'US',
-            goodsAndServices: 'Class 35, Class 42'
-          }
-        ]
-      };
-
-      expect(notice.id).toBe(noticeId);
-      expect(isValidNiceClass(35)).toBe(true);
-      expect(isValidNiceClass(42)).toBe(true);
+      expect(verifyTcnId(notice.id, notice.label, notice.notAfter)).toBe(true);
     });
   });
 });

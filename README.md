@@ -1,689 +1,382 @@
-# EPP Client TypeScript
+# epp-ts
 
-<div align="center">
+[![CI](https://github.com/al0fayz/epp-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/al0fayz/epp-ts/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/epp-ts.svg)](https://www.npmjs.com/package/epp-ts)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-[![RFC 5730](https://img.shields.io/badge/RFC-5730-blue.svg)](https://www.rfc-editor.org/rfc/rfc5730.html)
-[![RFC 5731](https://img.shields.io/badge/RFC-5731-blue.svg)](https://www.rfc-editor.org/rfc/rfc5731.html)
-[![RFC 5732](https://img.shields.io/badge/RFC-5732-blue.svg)](https://www.rfc-editor.org/rfc/rfc5732.html)
-[![RFC 5733](https://img.shields.io/badge/RFC-5733-blue.svg)](https://www.rfc-editor.org/rfc/rfc5733.html)
-[![RFC 5910](https://img.shields.io/badge/RFC-5910-blue.svg)](https://www.rfc-editor.org/rfc/rfc5910.html)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue.svg)](https://www.typescriptlang.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+A TypeScript client for the Extensible Provisioning Protocol (EPP), for registrars and registry tooling on Node.js.
 
-**Professional TypeScript EPP (Extensible Provisioning Protocol) Client**
+- Speaks EPP over TLS (RFC 5734) with the domain, contact and host mappings (RFC 5730-5733).
+- Supports the extensions ICANN gTLD registries rely on: DNSSEC, grace-period restores, sunrise and claims through the Trademark Clearinghouse, and registry fees.
+- The test suite validates every command the client can generate against the official IANA XML schemas, so the XML is checked by the same rules a strict registry server applies.
 
-Fully documented dengan referensi RFC lengkap untuk domain registry operations.
+## Contents
 
-[Documentation](#documentation) • [Features](#features) • [Examples](#examples) • [RFC Compliance](#rfc-compliance)
+- [Installation](#installation)
+- [Quick start](#quick-start)
+- [Supported standards](#supported-standards)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Error handling](#error-handling)
+- [Logging](#logging)
+- [Registry-specific extensions](#registry-specific-extensions)
+- [Helpers](#helpers)
+- [Development](#development)
+- [License](#license)
 
-</div>
-
----
-
-## 🎯 Overview
-
-EPP Client TypeScript adalah implementasi lengkap dari EPP Protocol (RFC 5730-5734) dengan dokumentasi komprehensif yang mengacu pada RFC di setiap type dan function. Client ini dirancang untuk production-ready domain registry operations.
-
-### Mengapa EPP Client Ini?
-
-- ✅ **RFC Compliant**: Setiap function dan type didokumentasikan dengan RFC reference yang spesifik
-- ✅ **Type-Safe**: Full TypeScript support dengan comprehensive type definitions
-- ✅ **Production Ready**: Error handling, session management, dan best practices
-- ✅ **Well Documented**: Setiap method dilengkapi dengan penjelasan, parameters, result codes, dan examples
-- ✅ **Complete**: Support untuk semua EPP operations (domain, contact, host, transfer)
-
-## 📦 Installation
+## Installation
 
 ```bash
-npm install epp-client
-# or
-yarn add epp-client
-# or
-pnpm add epp-client
+npm install epp-ts
 ```
 
-## 🚀 Quick Start
+Requires Node.js 18 or later. The only runtime dependency is [`sax`](https://www.npmjs.com/package/sax).
+
+## Quick start
 
 ```typescript
-import { EppClient } from 'epp-client';
+import { EppClient, EppCommandError } from 'epp-ts';
 
-// Initialize client dengan TLS/TCP
 const client = new EppClient({
-  host: 'epp.registry.example',  // EPP server hostname
-  port: 700,                      // Standard EPP port (RFC 5734)
+  host: 'epp.registry.example',
   username: 'registrar-id',
-  password: 'password',
-  timeout: 30000,
-  debug: true // Enable untuk development
+  password: process.env.EPP_PASSWORD!,
 });
 
 try {
-  // Connect via TLS/TCP (RFC 5734)
-  await client.connect();
-  console.log('Connected via TLS/TCP');
-  
-  // Login - RFC 5730 Section 2.9.1.1
-  await client.login();
-  console.log('Authenticated');
-  
-  // Check domain availability - RFC 5731 Section 3.1.1
-  const result = await client.domainCheck(['example.com', 'example.net']);
-  console.log(result.data);
-  // Output: [{ name: 'example.com', available: true }, ...]
-  
-  // Create domain - RFC 5731 Section 3.2.1
-  await client.domainCreate({
-    name: 'example.com',
-    period: { value: 1, unit: 'y' },
-    registrant: 'contact-id',
-    contacts: [
-      { type: 'admin', id: 'contact-id' },
-      { type: 'tech', id: 'contact-id' }
-    ],
-    ns: { hostObj: ['ns1.example.com', 'ns2.example.com'] },
-    authInfo: { pw: 'auth-code' }
-  });
-  
-  // Logout - RFC 5730 Section 2.9.1.2
+  await client.connect();   // TLS handshake and server greeting
+  await client.login();     // announces the services both sides support
+
+  const { data } = await client.domainCheck(['example.com', 'example.net']);
+  console.log(data);        // [{ name: 'example.com', available: true }, ...]
+
   await client.logout();
-  console.log('Logged out');
-  
-  // Disconnect
-  await client.disconnect();
-  console.log('Disconnected');
-  
 } catch (error) {
-  console.error(`EPP Error ${error.code}: ${error.message}`);
-  
-  // Always cleanup
-  if (client.isConnected()) {
-    await client.disconnect();
+  if (error instanceof EppCommandError) {
+    console.error(error.code, error.message);   // e.g. 2302 "EPP 2302: Object exists"
   }
+  throw error;
+} finally {
+  await client.disconnect();
 }
 ```
 
-## ✨ Features
+## Supported standards
 
-### Transport Layer (RFC 5734)
-- ✅ **TLS/TCP Connection**: Native TCP socket dengan TLS encryption
-- ✅ **Standard Port 700**: EPP-compliant port configuration
-- ✅ **4-byte Framing**: Proper EPP frame format implementation
-- ✅ **Persistent Connection**: Stateful session management
-- ✅ **TLS 1.2+**: Minimum TLS 1.2 enforced
-- ✅ **Mutual TLS**: Client certificate authentication support
-- ✅ **Custom SSL/TLS**: Comprehensive SSL configuration options
-- ✅ **Certificate Validation**: Proper certificate chain verification
-- ✅ **SNI Support**: Server Name Indication untuk multi-domain servers
-- ✅ **Cipher Control**: Custom cipher suite configuration
+| Specification | Namespace | Coverage |
+|---------------|-----------|----------|
+| RFC 5730 EPP | `epp-1.0` | Greeting, hello, login (with password change), logout, poll req/ack, all result codes |
+| RFC 5731 Domain | `domain-1.0` | check, info, create, update, renew, delete, transfer (request, query, approve, reject, cancel) |
+| RFC 5732 Host | `host-1.0` | check, info, create, update, delete |
+| RFC 5733 Contact | `contact-1.0` | check, info, create, update, delete, transfer, disclosure preferences |
+| RFC 5734 Transport | | TLS 1.2+, mutual TLS, framing with length validation |
+| RFC 5910 DNSSEC | `secDNS-1.1` | DS and key data on create, update (rem/add/chg, urgent) and info |
+| RFC 3915 Grace Period | `rgp-1.0` | Status on info, restore request, restore report |
+| RFC 8334 Launch Phase | `launch-1.0` | Claims/availability/trademark checks, sunrise (encoded SMD, mark codes), claims notice acceptance, application info/update/delete |
+| RFC 7848 Marks | `mark-1.0`, `signedMark-1.0` | Encoded signed marks; marks returned by launch info |
+| RFC 8748 Fees | `epp:fee-1.0` | Fee check; fees on create, renew, transfer, update and restore; balances and credits |
+| RFC 8807 Login Security | `epp:loginSec-1.0` | Passwords longer than 16 characters, user agent, security events |
+| RFC 8590 Change Poll | `changePoll-1.0` | Parsed from poll messages |
+| RFC 8495 Allocation Token | `allocationToken-1.0` | Tokens on check, create, transfer and update; token info |
+| RFC 9361 TMCH | | TCNID verification, SMD file parsing |
 
-### Core Protocol (RFC 5730)
-- ✅ **Session Management**: Connect/disconnect, login/logout
-- ✅ **Poll Queue**: Message queue management untuk notifications
-- ✅ **Result Codes**: Comprehensive error handling dengan RFC-compliant codes
-- ✅ **Transaction IDs**: Client dan server transaction tracking
-- ✅ **Server Greeting**: Automatic greeting message processing
+At login the client announces only the object and extension services it implements that the server also lists in its greeting (RFC 5730 Section 2.9.1.1). Using an extension that was not announced raises an `EppValidationError` before anything is sent.
 
-### Domain Operations (RFC 5731)
-- ✅ **Check**: Verify domain availability (bulk support)
-- ✅ **Info**: Retrieve domain details
-- ✅ **Create**: Register new domains
-- ✅ **Update**: Modify domain information (NS, contacts, status)
-- ✅ **Renew**: Extend registration period
-- ✅ **Delete**: Remove domains (grace period support)
-- ✅ **Transfer**: Full transfer operations (request, query, approve, reject, cancel)
+[docs/COMPLIANCE.md](docs/COMPLIANCE.md) maps these standards and the ICANN gTLD requirements to the client's features.
 
-### Contact Operations (RFC 5733)
-- ✅ **Check**: Verify contact ID availability
-- ✅ **Info**: Retrieve contact details
-- ✅ **Create**: Create contact objects dengan postal info (loc/int)
-- ✅ **Update**: Modify contact information
-- ✅ **Delete**: Remove contact objects
-- ✅ **Transfer**: Transfer contact ownership
-- ✅ **Privacy**: Disclosure preferences untuk WHOIS/RDAP
+## Configuration
 
-### Host Operations (RFC 5732)
-- ✅ **Check**: Verify host name availability
-- ✅ **Info**: Retrieve host details
-- ✅ **Create**: Create nameserver objects (glue record support)
-- ✅ **Update**: Modify host information (IP addresses, name changes)
-- ✅ **Delete**: Remove host objects
-
-### EPP Extensions
-- ✅ **Launch Extension (RFC 8334)**: Launch phase mapping untuk sunrise/landrush/claims
-  - Sunrise period registrations dengan SMD
-  - Claims notice processing
-  - Landrush registrations
-  - Application ID tracking
-- ✅ **TMCH Extension**: Trademark Clearinghouse integration
-  - Signed Mark Data (SMD) validation
-  - Claims notice handling
-  - Trademark verification
-  - Nice Classification support
-- ✅ **Fee Extension (RFC 8748)**: Query operation costs
-  - Fee checking untuk create/renew/transfer/restore
-  - Multi-currency support
-  - Grace period fee information
-  - Refundable fee tracking
-- ✅ **RGP Extension (RFC 3915)**: Registry Grace Period operations
-  - Grace period status tracking (Add/Renew/Transfer)
-  - Redemption period management
-  - Domain restore operations
-  - Pending delete handling
-- ✅ **DNSSEC Extension (RFC 5910)**: DNS Security Extensions support
-- ✅ **Multiple Postal Info**: Support untuk loc dan int formats
-- ✅ **IPv6 Support**: Full IPv4 dan IPv6 support untuk glue records
-
-### Developer Experience
-- ✅ **TypeScript**: Full type safety dengan comprehensive interfaces
-- ✅ **Documentation**: JSDoc dengan RFC references di setiap method
-- ✅ **Examples**: Complete examples untuk common scenarios
-- ✅ **Error Messages**: Descriptive error messages dengan context
-- ✅ **Debug Mode**: XML request/response logging
-
-## 📖 Documentation
-
-### Complete Guides
-
-- **[RFC Documentation](./docs/RFC_DOCUMENTATION.md)**: Complete RFC reference guide
-  - Detailed type documentation dengan RFC sections
-  - Method documentation dengan result codes
-  - Best practices dan security considerations
-  - Complete examples
-
-- **[SSL/TLS Configuration](./docs/SSL_TLS_CONFIGURATION.md)**: SSL/TLS security guide
-  - Comprehensive SSL/TLS options
-  - Production configuration examples
-  - Mutual TLS authentication
-  - Certificate management
-  - Troubleshooting SSL issues
-  - Security best practices
-
-- **[DNSSEC Guide](./docs/DNSSEC_GUIDE.md)**: DNSSEC Extension guide
-  - DNSSEC concepts and operations
-  - DS and DNSKEY record management
-  - Algorithm and digest type support
-  - Key rollover procedures
-  - Best practices and troubleshooting
-
-- **[TLS/TCP Implementation](./docs/TLS_TCP_IMPLEMENTATION.md)**: Transport layer guide
-  - TLS/TCP connection details
-  - Frame format implementation
-  - Connection management
-  - Migration from HTTP to TLS/TCP
-
-### SSL/TLS Configuration
-
-EPP Client support comprehensive SSL/TLS configuration untuk secure communications:
-
-#### Basic Production Configuration
 ```typescript
 const client = new EppClient({
-  host: 'epp.registry.com',
-  port: 700,
+  host: 'epp.registry.example',
+  port: 700,                       // default, the IANA-assigned EPP port
   username: 'registrar-id',
-  password: 'password',
-  
-  // SSL/TLS Configuration
-  rejectUnauthorized: true,    // MUST be true in production!
-  minVersion: 'TLSv1.2',       // Minimum TLS 1.2
-  maxVersion: 'TLSv1.3',       // Prefer TLS 1.3
-  
-  timeout: 30000
+  password: 'secret',
+  timeout: 30000,                  // ms to wait for each response
+  clientCert: fs.readFileSync('client.pem'),   // mutual TLS
+  clientKey: fs.readFileSync('client-key.pem'),
+  keepAliveInterval: 5 * 60 * 1000,             // send <hello> when idle
+  autoReconnect: true,
 });
 ```
 
-#### Mutual TLS (Client Certificate Authentication)
-```typescript
-import * as fs from 'fs';
+| Option | Default | Description |
+|--------|---------|-------------|
+| `host` | required | Server hostname. |
+| `port` | `700` | Server port. |
+| `username`, `password` | required | Client ID (3-16 characters) and password. Passwords longer than 16 characters need a server that supports loginSec. |
+| `lang`, `version` | `'en'`, `'1.0'` | Language and protocol version requested at login. |
+| `timeout` | `30000` | Milliseconds to wait for a response. A timed-out connection is closed, because a late response would otherwise be read as the reply to the next command. |
+| `connectTimeout` | `timeout` | Milliseconds to wait for the TLS handshake and greeting. |
+| `clientCert`, `clientKey`, `passphrase` | | Client certificate for mutual TLS. |
+| `ca` | Node's root store | CA certificates trusted for the server. |
+| `rejectUnauthorized` | `true` | Verify the server certificate chain. |
+| `checkServerIdentity` | `true` | Verify that the certificate matches `servername`. |
+| `servername` | `host` | Name used for SNI and certificate checks. |
+| `minVersion`, `maxVersion` | `'TLSv1.2'`, unset | TLS version range. |
+| `ciphers` | Node's default | OpenSSL cipher list. |
+| `tlsOptions` | | Extra options for `tls.connect()`, applied last. |
+| `objURIs`, `extURIs` | negotiated | Services to announce at login, overriding negotiation. |
+| `additionalExtURIs` | | Registry-specific extensions to announce as well, when the server offers them. |
+| `userAgent` | library and Node.js version | User agent sent through loginSec; `false` sends none. |
+| `keepAliveInterval` | `0` (off) | Send `<hello>` after this many idle milliseconds. |
+| `autoReconnect` | `false` | Reconnect and log in again before the next command after the connection drops. A command that was in flight is not retried. |
+| `maxFrameSize` | 10 MiB | Largest data unit accepted from the server. |
+| `clTRIDPrefix`, `generateClTRID` | `'EPPTS'` | Client transaction ID format. |
+| `debug`, `logger` | off | Debug logging; see [Logging](#logging). |
 
-const client = new EppClient({
-  host: 'epp.registry.com',
-  port: 700,
-  username: 'registrar-id',
-  password: 'password',
-  
-  // Mutual TLS Configuration
-  clientCert: fs.readFileSync('./certs/client-cert.pem'),
-  clientKey: fs.readFileSync('./certs/client-key.pem'),
-  ca: fs.readFileSync('./certs/ca-bundle.pem'),
-  passphrase: 'key-passphrase', // If key is encrypted
-  
-  // TLS Options
-  rejectUnauthorized: true,
-  minVersion: 'TLSv1.2',
-  
-  // Custom Ciphers (optional)
-  ciphers: 'TLS_AES_256_GCM_SHA384:TLS_AES_128_GCM_SHA256',
-  
-  // SNI Support (optional)
-  servername: 'epp.registry.com'
+See [docs/SSL_TLS_CONFIGURATION.md](docs/SSL_TLS_CONFIGURATION.md) for TLS details.
+
+## Usage
+
+Every command resolves with an `EppResponse` for 1xxx result codes:
+
+```typescript
+interface EppResponse<T> {
+  success: boolean;
+  code: number;              // first result code, e.g. 1000 or 1001
+  message: string;
+  results: EppResult[];      // every <result>, with <value>/<extValue> details
+  data?: T;                  // typed <resData>
+  extensions: ResponseExtensions;   // secDNS, rgp, launchCheck, feeCheck, fee, loginSec, changePoll, ...
+  msgQ?: MessageQueue;       // when the server has queued messages
+  clTRID?: string;
+  svTRID?: string;
+  xml: string;               // raw response
+}
+```
+
+Commands are sent one at a time on the connection. Calls made while a command is in flight are queued, so concurrent callers each receive their own response.
+
+### Domains
+
+```typescript
+// Check, with prices for premium names (RFC 8748)
+const check = await client.domainCheck(['example.com'], {
+  fee: { currency: 'USD', commands: [{ name: 'create', period: 1 }, 'renew'] },
 });
-```
+console.log(check.data, check.extensions.feeCheck);
 
-**Available SSL/TLS Options:**
-- `rejectUnauthorized`: Validate server certificates (default: true)
-- `minVersion`: Minimum TLS version (default: 'TLSv1.2')
-- `maxVersion`: Maximum TLS version (default: 'TLSv1.3')
-- `clientCert`: Client certificate for mutual TLS
-- `clientKey`: Client private key
-- `ca`: Certificate Authority bundle
-- `passphrase`: Passphrase for encrypted private key
-- `ciphers`: Custom cipher suites
-- `servername`: Server name for SNI
-- `checkServerIdentity`: Enable/disable server identity check
+// Info; DNSSEC and grace-period data arrive in extensions
+const info = await client.domainInfo('example.com', { authInfo: 'auth-code', hosts: 'all' });
+console.log(info.data?.status, info.data?.exDate, info.extensions.secDNS, info.extensions.rgp);
 
-See [SSL/TLS Configuration Guide](./docs/SSL_TLS_CONFIGURATION.md) for complete documentation.
-
-### Examples
-
-- **[Complete Domain Registration](./examples/complete-domain-registration.ts)**
-  - Full flow dari check sampai registration
-  - Contact creation
-  - Nameserver setup
-  - Domain verification
-
-- **[Domain Transfer](./examples/domain-transfer.ts)**
-  - Transfer request (gaining registrar)
-  - Transfer approval/rejection (losing registrar)
-  - Transfer query dan cancellation
-  - Transfer best practices
-
-- **[DNSSEC Operations](./examples/dnssec-operations.ts)**
-  - Creating domains with DNSSEC data
-  - Adding/removing DS records
-  - Key rollover procedures
-  - Managing DNSKEY records
-  - Emergency DNSSEC removal
-
-## 🎓 Core Concepts
-
-### 1. EPP Sessions
-
-EPP menggunakan persistent, stateful sessions:
-
-```typescript
-// Login required before any operations
-await client.login();
-
-// Perform operations
-await client.domainCheck(['example.com']);
-
-// Always logout to end session
-await client.logout();
-```
-
-### 2. Object Model
-
-EPP menggunakan hierarchical object model:
-
-- **Domains**: Primary objects (registrations)
-- **Contacts**: Associated dengan domains (registrant, admin, tech, billing)
-- **Hosts**: Nameservers untuk domains (subordinate atau external)
-
-### 3. Result Codes (RFC 5730 Section 3)
-
-```typescript
-// Success codes (1xxx)
-1000  // Command completed successfully
-1001  // Command completed successfully; action pending
-1500  // Command completed successfully; ending session
-
-// Error codes (2xxx)
-2200  // Authentication error
-2302  // Object exists
-2303  // Object does not exist
-2304  // Object status prohibits operation
-```
-
-### 4. Authorization Info
-
-Authorization codes digunakan untuk:
-- Domain transfers
-- Access restricted information
-- Contact transfers
-
-```typescript
-// Create dengan authInfo
-await client.domainCreate({
-  // ...
-  authInfo: { pw: 'strong-auth-code-2024' }
-});
-
-// Transfer dengan authInfo
-await client.domainTransfer({
-  name: 'example.com',
-  op: 'request',
-  authInfo: { pw: 'auth-code-from-current-registrar' }
-});
-```
-
-### 5. Nameserver Types
-
-**Subordinate Hosts (Glue Records)**:
-```typescript
-// ns1.example.com untuk domain example.com
-// MUST have IP addresses
-await client.hostCreate({
-  name: 'ns1.example.com',
-  addr: [
-    { ip: '192.0.2.1', type: 'v4' },
-    { ip: '2001:db8::1', type: 'v6' }
-  ]
-});
-```
-
-**External Hosts**:
-```typescript
-// ns1.otherdomain.com untuk domain example.com
-// NO IP addresses needed
+// Create. RFC 5731 only requires name and authInfo; registry policy decides the rest.
 await client.domainCreate({
   name: 'example.com',
-  ns: { hostObj: ['ns1.otherdomain.com'] }
-  // ...
+  period: 1,                                   // years, or { value: 6, unit: 'm' }
+  ns: ['ns1.example.net', 'ns2.example.net'],  // or { hostAttr: [...] }
+  registrant: 'reg-001',
+  contacts: [{ type: 'admin', id: 'adm-001' }, { type: 'tech', id: 'tech-001' }],
+  authInfo: { pw: generateAuthInfo() },
+  dnssec: { dsData: [{ keyTag: 12345, alg: 13, digestType: 2, digest: '...' }] },
+});
+
+// Update
+await client.domainUpdate({
+  name: 'example.com',
+  add: { ns: ['ns3.example.net'], status: [{ s: 'clientTransferProhibited' }] },
+  rem: { ns: ['ns1.example.net'] },
+  chg: { authInfo: { pw: 'new-auth-code' } },
+});
+
+// Renew; curExpDate accepts the exDate returned by info
+await client.domainRenew({ name: 'example.com', curExpDate: info.data!.exDate!, period: 1 });
+
+// Transfer: request, query, approve, reject or cancel
+await client.domainTransfer({ name: 'example.com', op: 'request', authInfo: { pw: 'auth-code' } });
+
+await client.domainDelete('example.com');
+```
+
+### Grace-period restore (RFC 3915)
+
+ICANN gTLD registries restore a deleted domain in two steps: a restore request, then a restore report.
+
+```typescript
+await client.domainRestore('example.com');            // request
+
+await client.domainRestore('example.com', {           // report
+  report: {
+    preData: 'Registration data before deletion',
+    postData: 'Registration data after restore',
+    delTime: '2026-11-01T10:00:00Z',
+    resTime: '2026-11-10T08:00:00Z',
+    resReason: 'Registrant error.',
+    statement: [
+      'This registrar has not restored the Registered Name in order to assume the rights to use or sell the Registered Name for itself or for any third party.',
+      'The information in this report is true to best of this registrar\'s knowledge.',
+    ],
+  },
 });
 ```
 
-## 🔒 Security
+The report is checked with `validateRestoreReport()` before it is sent: both RFC 3915 statements are required.
 
-### Best Practices
-
-1. **Always use HTTPS/TLS** untuk EPP connections
-2. **Store credentials securely** - Never hardcode passwords
-3. **Use strong auth codes** - Minimum 8 characters, random
-4. **Implement timeout** - Default 30 seconds recommended
-5. **Logout properly** - Always end sessions
-6. **Validate inputs** - Check domain names, contact IDs
-7. **Handle errors** - Implement proper error handling
-
-### Contact Privacy
+### Sunrise and claims (RFC 8334, TMCH)
 
 ```typescript
-// Privacy control dengan disclosure preferences
-await client.contactCreate({
-  id: 'contact-123',
-  // ...
-  disclose: {
-    flag: 0, // 0 = Hide, 1 = Show
-    name: { type: 'int' },
-    addr: { type: 'int' },
-    email: true
-  }
+import { parseSmdFile, verifyTcnId } from 'epp-ts';
+
+// Sunrise with the Signed Mark Data file issued by the TMCH
+const smd = parseSmdFile(fs.readFileSync('mark.smd', 'utf8'));
+await client.domainCreate({
+  name: 'example.tld',
+  authInfo: { pw: generateAuthInfo() },
+  launch: { phase: 'sunrise', encodedSignedMark: smd.encodedSignedMark },
+});
+
+// Claims: find names with trademark claims, show the notice, record acceptance
+const claims = await client.domainCheck(['example.tld'], { launch: { type: 'claims', phase: 'claims' } });
+const { exists, claimKeys } = claims.extensions.launchCheck!.results[0];
+
+// After the registrant accepts the notice fetched with the claim key:
+if (verifyTcnId(noticeId, 'example.tld', noticeNotAfter)) {
+  await client.domainCreate({
+    name: 'example.tld',
+    authInfo: { pw: generateAuthInfo() },
+    launch: {
+      phase: 'claims',
+      notice: { noticeID: noticeId, validatorID: 'tmch', notAfter: noticeNotAfter, acceptedDate: new Date() },
+    },
+  });
+}
+```
+
+### Fees (RFC 8748)
+
+```typescript
+const quote = await client.feeCheck({ domain: 'premium.example', command: ['create', 'renew'], period: 1, currency: 'USD' });
+const fee = quote.data?.items[0];   // { objID, available, class: 'premium', commands: [{ name, fees, ... }] }
+
+await client.domainCreate({
+  name: 'premium.example',
+  authInfo: { pw: generateAuthInfo() },
+  fee: { currency: 'USD', amount: '100.00' },   // the price the registrar agrees to pay
 });
 ```
 
-## 🧪 Testing
-
-Proyek ini memiliki **comprehensive test suite** dengan **116 tests** yang mencakup semua aspek protokol EPP.
-
-### Test Coverage
-
-| Suite | Tests | Coverage |
-|-------|-------|----------|
-| EppClient | 5 | Connection & communication |
-| XmlBuilder | 21 | XML generation & validation |
-| EppRequest | 59 | All EPP commands (RFC 5730-5733) |
-| Dnssec | 31 | DNSSEC validation (RFC 5910) |
-| **Total** | **116** | **100% RFC Compliance** |
-
-### Running Tests
-
-```bash
-# Run all tests
-npm test
-
-# Run with verbose output
-npm test -- --verbose
-
-# Run specific test suite
-npm test -- EppRequest.test.ts
-npm test -- Dnssec.test.ts
-
-# Run with coverage report
-npm test -- --coverage
-
-# Watch mode (for development)
-npm test -- --watch
-```
-
-### Test Results
-
-```
-Test Suites: 4 passed, 4 total
-Tests:       113 passed, 113 total
-Snapshots:   0 total
-Time:        ~2 seconds
-```
-
-### What's Tested
-
-**Session Management (RFC 5730)**
-- ✅ Login/Logout commands
-- ✅ Hello command (greeting)
-- ✅ Poll command (message queue)
-- ✅ Transaction ID generation
-- ✅ Session state management
-
-**Domain Commands (RFC 5731)**
-- ✅ Check, Info, Create, Update, Renew, Delete, Transfer
-- ✅ DNSSEC extensions
-- ✅ All transfer operations (request, query, approve, reject, cancel)
-- ✅ Status changes and authorization codes
-
-**Contact Commands (RFC 5733)**
-- ✅ Check, Info, Create, Update, Delete, Transfer
-- ✅ Postal info (international & localized)
-- ✅ Privacy/disclosure settings
-- ✅ Multi-language support
-
-**Host Commands (RFC 5732)**
-- ✅ Check, Info, Create, Update, Delete
-- ✅ IPv4 and IPv6 support
-- ✅ Glue records management
-- ✅ External hosts
-
-**DNSSEC Extensions (RFC 5910)**
-- ✅ DS Data validation
-- ✅ Key Data validation
-- ✅ Algorithm and digest type support
-- ✅ Key rollover scenarios
-- ✅ Complex DNSSEC scenarios
-
-**XML Generation**
-- ✅ Proper namespace handling
-- ✅ RFC-compliant structure
-- ✅ Special character escaping
-- ✅ Extension elements
-
-For detailed test documentation, see **[Test Coverage Documentation](./docs/TEST_COVERAGE.md)**.
-
-### Test Quality
-
-- **Coverage**: 100% of implemented EPP commands
-- **RFC Compliance**: 100% adherence to specifications
-- **Pass Rate**: 113/113 (100%)
-- **Execution Time**: ~2 seconds
-- **Flaky Tests**: 0
-- **Maintainability**: High (well-organized, documented)
-
-## 📝 Examples
-
-### Domain Registration Flow
+### Contacts and hosts
 
 ```typescript
-// 1. Check availability
-const check = await client.domainCheck(['example.com']);
-
-// 2. Create contacts
 await client.contactCreate({
   id: 'reg-001',
-  postalInfo: { type: 'int', name: 'John Doe', /* ... */ },
-  email: 'john@example.com',
-  authInfo: { pw: 'password' }
+  postalInfo: { type: 'int', name: 'Jane Doe', addr: { street: ['1 Main St'], city: 'Jakarta', cc: 'ID' } },
+  voice: '+62.215551234',
+  email: 'jane@example.com',
+  authInfo: { pw: generateAuthInfo() },
+  disclose: { flag: false, voice: true, email: true },   // ask the registry not to publish these
 });
 
-// 3. Create nameservers
-await client.hostCreate({
-  name: 'ns1.example.com',
-  addr: [{ ip: '192.0.2.1', type: 'v4' }]
-});
-
-// 4. Register domain
-await client.domainCreate({
-  name: 'example.com',
-  period: { value: 1, unit: 'y' },
-  registrant: 'reg-001',
-  contacts: [{ type: 'admin', id: 'reg-001' }],
-  ns: { hostObj: ['ns1.example.com'] },
-  authInfo: { pw: 'auth-code' }
-});
+await client.hostCreate({ name: 'ns1.example.com', addr: ['192.0.2.1', '2001:db8::1'] });   // IP versions are detected
+await client.hostUpdate({ name: 'ns1.example.com', add: { addr: ['192.0.2.2'] } });
 ```
 
-### Domain Transfer
+### Poll queue
 
 ```typescript
-// Gaining registrar: Request transfer
-await client.domainTransfer({
-  name: 'example.com',
-  op: 'request',
-  authInfo: { pw: 'auth-from-losing-registrar' },
-  period: { value: 1, unit: 'y' } // Optional renewal
-});
+for (;;) {
+  const message = await client.poll('req');
+  if (message.code === 1300) break;              // queue empty
 
-// Query transfer status
-await client.domainTransfer({
-  name: 'example.com',
-  op: 'query'
-});
-
-// Losing registrar: Approve transfer
-await client.domainTransfer({
-  name: 'example.com',
-  op: 'approve'
-});
-```
-
-### DNSSEC Operations
-
-```typescript
-// Create domain with DNSSEC (RFC 5910)
-await client.domainCreate({
-  name: 'secure-example.com',
-  period: { value: 1, unit: 'y' },
-  registrant: 'contact-id',
-  authInfo: { pw: 'auth-code' },
-  // DNSSEC Extension
-  dnssec: {
-    maxSigLife: 604800, // 7 days in seconds
-    dsData: [{
-      keyTag: 12345,
-      alg: 8,          // RSA/SHA-256
-      digestType: 2,   // SHA-256
-      digest: '49FD46E6C4B45C55D4AC69CBD3CD34AC1AFE51DE'
-    }]
+  console.log(message.msgQ?.message);
+  switch (message.data?.type) {
+    case 'domain:trnData': console.log('transfer', message.data.value.trStatus); break;
+    case 'domain:panData': console.log('pending action', message.data.value.paResult); break;
   }
-});
-
-// Add DNSSEC to existing domain
-await client.domainUpdate({
-  name: 'example.com',
-  dnssec: {
-    add: {
-      dsData: [{
-        keyTag: 54321,
-        alg: 13,         // ECDSA P-256
-        digestType: 4,   // SHA-384
-        digest: '2BB183AF5F22588179A53B0A98631FAD1A292118'
-      }]
-    },
-    urgent: false
-  }
-});
-
-// Remove all DNSSEC data
-await client.domainUpdate({
-  name: 'example.com',
-  dnssec: {
-    rem: { all: true },
-    urgent: true
-  }
-});
-```
-
-### Poll Queue Management
-
-```typescript
-// Request first message from queue
-const result = await client.poll('req');
-
-if (result.code === 1300) {
-  console.log('No messages in queue');
-} else if (result.data?.msgQ) {
-  const msg = result.data.msgQ;
-  console.log('Message:', msg.msg);
-  console.log('Remaining:', msg.count);
-  
-  // Acknowledge message (removes from queue)
-  await client.poll('ack', msg.id);
+  await client.poll('ack', message.msgQ!.id);
 }
+```
 
-// Process all messages
-let hasMessages = true;
-while (hasMessages) {
-  const result = await client.poll('req');
-  
-  if (result.code === 1300) {
-    hasMessages = false;
-  } else if (result.data?.msgQ) {
-    // Process message
-    console.log('Type:', result.data.msgQ.type);
-    console.log('Content:', result.data.msgQ.msg);
-    
-    // Acknowledge
-    await client.poll('ack', result.data.msgQ.id);
+### Session
+
+```typescript
+client.on('close', () => console.log('connection closed'));
+client.on('reconnect', () => console.log('reconnected and logged in again'));
+
+const greeting = await client.hello();         // also keeps an idle session alive
+console.log(client.getServices());            // services announced at login
+await client.login({ newPassword: 'new-pass-123' });   // change the password at login
+```
+
+## Error handling
+
+All errors extend `EppError`, which extends `Error` and has a numeric `code`:
+
+| Class | When |
+|-------|------|
+| `EppCommandError` | The server answered with a 2xxx code. `code`, `results` (with `extValues` reasons) and the full `response` are available. |
+| `EppConnectionError` | Connecting failed, or the connection closed. Pending commands fail at once. |
+| `EppTimeoutError` | No greeting or response in time. The connection is closed. |
+| `EppProtocolError` | Malformed frame or XML, or a response whose clTRID does not match. The connection is closed. |
+| `EppValidationError` | The request breaks a schema or RFC rule and was not sent. |
+
+```typescript
+try {
+  await client.domainCreate(request);
+} catch (error) {
+  if (error instanceof EppCommandError && error.code === EppResultCode.OBJECT_EXISTS) {
+    // name taken
   }
 }
 ```
 
-## 🔧 RFC Compliance
+## Logging
 
-This client implements the following RFCs:
+`debug: true` logs connection events and every frame to the console; `logger` sends them anywhere else:
 
-| RFC | Title | Status |
-|-----|-------|--------|
-| [RFC 5730](https://www.rfc-editor.org/rfc/rfc5730.html) | Extensible Provisioning Protocol (EPP) | ✅ Implemented |
-| [RFC 5731](https://www.rfc-editor.org/rfc/rfc5731.html) | EPP Domain Name Mapping | ✅ Implemented |
-| [RFC 5732](https://www.rfc-editor.org/rfc/rfc5732.html) | EPP Host Mapping | ✅ Implemented |
-| [RFC 5733](https://www.rfc-editor.org/rfc/rfc5733.html) | EPP Contact Mapping | ✅ Implemented |
-| [RFC 5734](https://www.rfc-editor.org/rfc/rfc5734.html) | EPP Transport over TCP | ✅ Implemented |
-| [RFC 5910](https://www.rfc-editor.org/rfc/rfc5910.html) | DNSSEC Extensions for EPP | ✅ Implemented |
-| [RFC 8748](https://www.rfc-editor.org/rfc/rfc8748.html) | EPP Fee Extension | ✅ Implemented |
+```typescript
+new EppClient({ ...config, logger: { debug: (m) => log.debug(m), warn: (m) => log.warn(m) } });
+```
 
-## 🤝 Contributing
+Passwords (`<pw>`, `<newPW>`, loginSec), authorization info and allocation tokens are replaced with `***` in logged XML. `redactXml()` applies the same redaction to your own logs.
 
-Contributions are welcome! Please read our contributing guidelines.
+## Registry-specific extensions
 
-## 📄 License
+Build extension elements with `el()`, declaring their namespace, and pass them in `extensions`. List the namespace in `additionalExtURIs` so it is announced at login whenever the server offers it:
 
-MIT License - see [LICENSE](LICENSE) file for details.
+```typescript
+import { el } from 'epp-ts';
 
-## 🙏 Acknowledgments
+const client = new EppClient({ ...config, additionalExtURIs: ['urn:example:idn-1.0'] });
 
-- IETF untuk EPP protocol specifications
-- Domain registry community untuk best practices
-- TypeScript team untuk excellent tooling
+await client.domainCreate({
+  name: 'xn--example.example',
+  authInfo: { pw: generateAuthInfo() },
+  extensions: [el('idn:data', { 'xmlns:idn': 'urn:example:idn-1.0' }, el('idn:table', null, 'de'))],
+});
+```
 
-## 📞 Support
+Extension data the client does not interpret is returned as XML in `response.extensions.unknown`; `parseXml()` turns it into a tree you can query by namespace (`node.child(ns, name)`, `node.text`). For commands the client does not model, `client.sendRaw(xml)` sends a complete EPP document and parses the response.
 
-- 📖 Documentation: [RFC_DOCUMENTATION.md](./RFC_DOCUMENTATION.md)
-- 💬 Issues: [GitHub Issues](https://github.com/your-repo/issues)
-- 📧 Email: support@example.com
+## Helpers
 
----
+| Helper | Purpose |
+|--------|---------|
+| `generateAuthInfo(length?)` | Cryptographically random authorization code |
+| `toAsciiDomain()`, `toUnicodeDomain()`, `normalizeDomain()` | IDN conversion; registries expect A-labels |
+| `validateDomain()`, `validateContactId()`, `validatePhone()`, `validateIPv4()`, `validateIPv6()` | Input checks matching the EPP schemas |
+| `validateDsData()`, `validateKeyData()` | DNSSEC record checks |
+| `validateRestoreReport()`, `canRestore()`, `DEFAULT_GRACE_PERIODS` | Grace period helpers |
+| `sumFeeAmounts()`, `calculateTotalFees()` | Exact sums of fee amounts |
+| `parseSmdFile()`, `extractEncodedSmd()`, `verifyTcnId()`, `computeTcnChecksum()` | TMCH files and notices (RFC 9361) |
+| `EppResultCode`, `EppStatus`, `getEppResultMessage()` | Result codes and status values |
+| `NS` | Namespace URIs |
 
-<div align="center">
+## Development
 
-**Built with ❤️ for the domain registry community**
+```bash
+npm install
+npm test            # unit, schema-validation and TLS integration tests
+npm run lint
+npm run typecheck   # src, tests and examples
+npm run build       # dist/
+```
 
-Fully compliant dengan RFC 5730-5734 | TypeScript | Production Ready
+The tests need no network access: commands are validated against the schemas in [test/schemas](test/schemas), and the client runs against an in-process TLS server. [examples/](examples) shows complete workflows against a real server; use your registry's test (OT&E) environment.
 
-</div>
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## License
+
+[MIT](LICENSE) © 2025-2026 Ahmad Ropai

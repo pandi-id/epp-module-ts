@@ -1,332 +1,130 @@
 /**
- * EPP Launch Extension Types
- * Referensi: RFC 8334 - Launch Phase Mapping for EPP
- * 
- * Launch extension mendukung operasi domain registry selama launch phases,
- * termasuk sunrise periods, landrush, dan general availability.
+ * Launch Phase extension types (RFC 8334, namespace launch-1.0), used for
+ * ICANN sunrise and trademark claims periods.
  */
 
-/**
- * Launch Phase Types
- * Referensi: RFC 8334 Section 2.1
- */
-export type LaunchPhase = 
-  | 'sunrise'        // Trademark holder priority period
-  | 'landrush'       // Limited registration period
-  | 'claims'         // Claims notification period
-  | 'open'           // General availability
-  | 'custom';        // Registry-defined phase
+/** Launch phase (RFC 8334 Section 2.3). */
+export type LaunchPhase = 'sunrise' | 'landrush' | 'claims' | 'open' | 'custom';
+
+/** Application status (RFC 8334 Section 2.4). */
+export type LaunchStatus =
+  | 'pendingValidation'
+  | 'validated'
+  | 'invalid'
+  | 'pendingAllocation'
+  | 'allocated'
+  | 'rejected'
+  | 'custom';
 
 /**
- * Launch Application Status
- * Referensi: RFC 8334 Section 3.2.1
- */
-export type LaunchStatus = 
-  | 'pendingValidation'    // Application received, pending validation
-  | 'validated'            // Application validated
-  | 'invalid'              // Application invalid
-  | 'pendingAllocation'    // Pending allocation decision
-  | 'allocated'            // Successfully allocated
-  | 'rejected'             // Application rejected
-  | 'custom';              // Registry-defined status
-
-/**
- * Launch Notice Structure
- * Referensi: RFC 8334 Section 2.2 - Claims Notice
- * 
- * Notice yang diberikan kepada applicants tentang existing trademark
- * rights untuk domain yang diminta.
+ * Acceptance of a trademark claims notice (RFC 8334 Section 3.3.2), required
+ * when registering a name that matches a mark during the claims period.
  */
 export interface LaunchNotice {
-  /**
-   * Notice identifier dari TMCH
-   * Format: YYYY-MM-DDTHH:mm:ss.sssZ-xxxxxxxx
-   */
+  /** Notice identifier; for TMCH notices, the TCNID (RFC 9361). */
   noticeID: string;
-  
-  /**
-   * Timestamp when notice was generated
-   * ISO 8601 format
-   */
-  notAfter: string;
-  
-  /**
-   * Timestamp when notice was accepted by applicant
-   * ISO 8601 format
-   */
-  acceptedDate: string;
+  /** Who issued the notice; "tmch" for the ICANN Trademark Clearinghouse. */
+  validatorID?: string;
+  /** Expiry of the notice. */
+  notAfter: string | Date;
+  /** When the registrant accepted the notice. */
+  acceptedDate: string | Date;
 }
 
-/**
- * Signed Mark Data (SMD)
- * Referensi: RFC 8334 Section 2.3
- * 
- * Digitally signed trademark information dari TMCH.
- */
-export interface SignedMarkData {
-  /**
-   * Base64-encoded signed mark data
-   * Obtained from TMCH system
-   */
-  encodedSignedMark: string;
+/** Mark validation code (RFC 8334 Section 2.6.1). */
+export interface LaunchCodeMark {
+  code: string;
+  validatorID?: string;
 }
 
-/**
- * Launch Create Request
- * Referensi: RFC 8334 Section 3.1.1
- * 
- * Extension data untuk domain create selama launch phase.
- */
-export interface LaunchCreateRequest {
-  /**
-   * Launch phase identifier
-   */
-  phase: {
-    name: LaunchPhase;
-    /**
-     * Optional sub-phase or custom phase name
-     */
-    subPhase?: string;
-  };
-  
-  /**
-   * Application type
-   * - application: Create application (not immediate registration)
-   * - registration: Direct registration
-   */
+/** Launch data for a domain create (RFC 8334 Section 3.3). */
+export interface LaunchCreate {
+  phase: LaunchPhase;
+  /** Sub-phase name, required when `phase` is "custom". */
+  subPhase?: string;
+  /** Create an application, or register directly. Server default when omitted. */
   type?: 'application' | 'registration';
-  
   /**
-   * Claims notice (required for claims phase)
+   * Base64 encoded signed mark(s) (RFC 7848) for sunrise. Pass the base64
+   * block of an SMD file; see `extractEncodedSmd()`.
    */
-  notice?: LaunchNotice;
-  
-  /**
-   * Signed mark data (required for sunrise)
-   */
-  signedMark?: SignedMarkData;
-  
-  /**
-   * Marks for encoding mark information
-   * Alternative to signedMark for some registries
-   */
-  mark?: TradeMark[];
+  encodedSignedMark?: string | string[];
+  /** Mark validation codes, as an alternative to signed marks. */
+  codeMark?: LaunchCodeMark | LaunchCodeMark[];
+  /** Accepted claims notice(s). */
+  notice?: LaunchNotice | LaunchNotice[];
 }
 
-/**
- * Launch Check Request
- * Referensi: RFC 8334 Section 3.1.2
- */
-export interface LaunchCheckRequest {
-  /**
-   * Launch phase for check
-   */
-  phase: {
-    name: LaunchPhase;
-    subPhase?: string;
-  };
-  
-  /**
-   * Check type
-   * - avail: Standard availability check
-   * - claims: Claims check
-   * - trademark: Trademark check
-   */
-  type?: 'avail' | 'claims' | 'trademark';
+/** Launch check form (RFC 8334 Section 3.1). */
+export interface LaunchCheck {
+  /** "claims" (default), "avail" or "trademark". */
+  type?: 'claims' | 'avail' | 'trademark';
+  phase?: LaunchPhase;
+  subPhase?: string;
 }
 
-/**
- * Launch Check Result
- * Referensi: RFC 8334 Section 3.1.2
- */
+/** Claim key used to fetch a claims notice from the validator. */
+export interface LaunchClaimKey {
+  key: string;
+  validatorID?: string;
+}
+
+/** Per-name result of a claims check. */
 export interface LaunchCheckResult {
-  /**
-   * Domain name checked
-   */
   name: string;
-  
-  /**
-   * Launch phase
-   */
-  phase: {
-    name: LaunchPhase;
-    subPhase?: string;
-  };
-  
-  /**
-   * Whether name is available
-   */
-  available?: boolean;
-  
-  /**
-   * Claims check result
-   */
-  claimKey?: {
-    /**
-     * Claim key for retrieving notice
-     */
-    key: string;
-  }[];
+  /** Whether a trademark claim exists for the name. */
+  exists: boolean;
+  claimKeys: LaunchClaimKey[];
 }
 
-/**
- * Launch Info Response
- * Referensi: RFC 8334 Section 3.1.3
- */
-export interface LaunchInfo {
-  /**
-   * Launch phase
-   */
-  phase: {
-    name: LaunchPhase;
-    subPhase?: string;
-  };
-  
-  /**
-   * Application ID (if type=application)
-   */
+/** Claims check response (`<launch:chkData>`). */
+export interface LaunchCheckData {
+  phase?: LaunchPhase;
+  subPhase?: string;
+  results: LaunchCheckResult[];
+}
+
+/** Launch info request (RFC 8334 Section 3.2). */
+export interface LaunchInfoRequest {
+  phase: LaunchPhase;
+  subPhase?: string;
   applicationID?: string;
-  
-  /**
-   * Application status
-   */
-  status?: {
-    s: LaunchStatus;
-    /**
-     * Optional status message
-     */
-    message?: string;
-  };
-  
-  /**
-   * Mark information
-   */
-  mark?: TradeMark[];
+  /** Ask for the mark data to be included. */
+  includeMark?: boolean;
 }
 
-/**
- * Launch Update Request
- * Referensi: RFC 8334 Section 3.1.4
- */
-export interface LaunchUpdateRequest {
-  /**
-   * Launch phase
-   */
-  phase: {
-    name: LaunchPhase;
-    subPhase?: string;
-  };
-  
-  /**
-   * Application ID to update
-   */
+/** Launch info response (`<launch:infData>`). */
+export interface LaunchInfoData {
+  phase: LaunchPhase;
+  subPhase?: string;
+  applicationID?: string;
+  status?: { s: LaunchStatus; name?: string; lang?: string; message?: string };
+  /** Outer XML of each returned mark (RFC 7848 `<mark:mark>`). */
+  marks: string[];
+}
+
+/** Identifies a launch application, for update and delete (RFC 8334 Section 3.4-3.5). */
+export interface LaunchIdContainer {
+  phase: LaunchPhase;
+  subPhase?: string;
+  applicationID: string;
+}
+
+/** Launch create response (`<launch:creData>`). */
+export interface LaunchCreateData {
+  phase: LaunchPhase;
+  subPhase?: string;
   applicationID?: string;
 }
 
-/**
- * Launch Delete Request
- * Referensi: RFC 8334 Section 3.1.5
- */
-export interface LaunchDeleteRequest {
-  /**
-   * Launch phase
-   */
-  phase: {
-    name: LaunchPhase;
-    subPhase?: string;
-  };
-  
-  /**
-   * Application ID to delete
-   */
-  applicationID?: string;
-}
-
-/**
- * Trademark Information
- * Referensi: RFC 8334 Section 2.3
- */
-export interface TradeMark {
-  /**
-   * Trademark name
-   */
-  name: string;
-  
-  /**
-   * Trademark identifier
-   */
-  id?: string;
-  
-  /**
-   * Issuing authority
-   */
-  issuerInfo?: {
-    /**
-     * Organization name
-     */
-    org: string;
-    
-    /**
-     * Country code (ISO 3166-1 alpha-2)
-     */
-    cc: string;
-  };
-  
-  /**
-   * Registration/application number
-   */
-  number?: string;
-  
-  /**
-   * Registration date
-   */
-  regDate?: string;
-  
-  /**
-   * Expiration date
-   */
-  exDate?: string;
-  
-  /**
-   * Trademark class(es)
-   * Nice Classification
-   */
-  class?: number[];
-  
-  /**
-   * Trademark labels
-   */
-  label?: string[];
-  
-  /**
-   * Goods and services description
-   */
-  goodsAndServices?: string;
-}
-
-/**
- * Launch Extension namespace
- */
 export const LAUNCH_NAMESPACE = 'urn:ietf:params:xml:ns:launch-1.0';
 
-/**
- * Launch Phase Validation
- */
 export function isValidLaunchPhase(phase: string): phase is LaunchPhase {
   return ['sunrise', 'landrush', 'claims', 'open', 'custom'].includes(phase);
 }
 
-/**
- * Launch Status Validation
- */
 export function isValidLaunchStatus(status: string): status is LaunchStatus {
-  return [
-    'pendingValidation',
-    'validated', 
-    'invalid',
-    'pendingAllocation',
-    'allocated',
-    'rejected',
-    'custom'
-  ].includes(status);
+  return ['pendingValidation', 'validated', 'invalid', 'pendingAllocation', 'allocated', 'rejected', 'custom'].includes(
+    status,
+  );
 }

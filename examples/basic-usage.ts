@@ -1,116 +1,72 @@
-import { EppClient } from '../src';
+/**
+ * Basic usage: the server greeting, a domain check and info, a contact
+ * check, and a poll request. Every command here is read-only.
+ *
+ * Run: npm run example:basic -- [domain] [contactId]
+ */
 
-async function main() {
-  // Initialize client with TLS/TCP configuration
-  const client = new EppClient({
-    host: 'epp.testregistry.com',
-    port: 700, // Standard EPP port
-    username: 'test-registrar',
-    password: 'test-password',
-    debug: true
-  });
+import { EppClient, EppCommandError, EppResultCode } from '../src';
+import { run } from './config';
 
+const domain = process.argv[2] ?? 'example.com';
+const contactId = process.argv[3] ?? 'sh8013';
+
+async function main(client: EppClient): Promise<void> {
+  // The greeting arrives right after the TLS handshake (RFC 5730 Section 2.4).
+  const greeting = client.getGreeting();
+  if (greeting) {
+    console.log('\nGreeting');
+    console.log(`  server:     ${greeting.svID} (${greeting.svDate})`);
+    console.log(`  versions:   ${greeting.versions.join(', ')}; languages: ${greeting.languages.join(', ')}`);
+    console.log(`  objects:    ${greeting.objURIs.join(', ')}`);
+    console.log(`  extensions: ${greeting.extURIs.join(', ') || 'none'}`);
+  }
+  // Login announces the services both sides support (RFC 5730 Section 2.9.1.1).
+  console.log(`  announced:  ${client.getServices()?.extURIs.join(', ') || 'no extensions'}`);
+
+  // Domain check (RFC 5731 Section 3.1.1): several names in one command.
+  console.log('\nDomain check');
+  const check = await client.domainCheck([domain, 'example.tld']);
+  for (const result of check.data ?? []) {
+    const reason = result.reason ? ` (${result.reason})` : '';
+    console.log(`  ${result.name}: ${result.available ? 'available' : `not available${reason}`}`);
+  }
+
+  // Domain info (RFC 5731 Section 3.1.2). Full data, including authInfo, is
+  // returned only to the sponsoring registrar.
+  console.log('\nDomain info');
   try {
-    console.log('=== EPP Client Demo ===\n');
-
-    // 1. Login
-    console.log('1. Logging in...');
-    const loginResult = await client.login();
-    if (!loginResult.success) {
-      throw new Error(`Login failed: ${loginResult.message}`);
+    const { data: info } = await client.domainInfo(domain);
+    if (info) {
+      console.log(`  ${info.name} (${info.roid}), sponsored by ${info.clID}`);
+      console.log(`  status:  ${info.status.join(', ')}`);
+      console.log(`  created: ${info.crDate ?? '-'}; expires: ${info.exDate ?? '-'}`);
+      // Host objects or host attributes, depending on the registry (RFC 5731 Section 1.1).
+      const nameServers = info.ns?.hostObj ?? info.ns?.hostAttr?.map((host) => host.hostName) ?? [];
+      console.log(`  name servers: ${nameServers.join(', ') || 'none'}`);
     }
-    console.log('✓ Login successful\n');
-
-    // 2. Check domain availability
-    console.log('2. Checking domain availability...');
-    const domainCheck = await client.domainCheck(['example.com', 'test-domain-123.com']);
-    console.log('Domain check results:');
-    domainCheck.data.forEach((result: any) => {
-      console.log(`  - ${result.name}: ${result.available ? 'Available' : 'Taken'}`);
-    });
-    console.log();
-
-    // 3. Check contact
-    console.log('3. Checking contact...');
-    const contactCheck = await client.contactCheck(['CONTACT123']);
-    console.log('Contact check results:');
-    contactCheck.data.forEach((result: any) => {
-      console.log(`  - ${result.id}: ${result.available ? 'Available' : 'Taken'}`);
-    });
-    console.log();
-
-    // 4. Create contact
-    console.log('4. Creating contact...');
-    const contactCreate = await client.contactCreate({
-      id: 'CONTACT123',
-      postalInfo: {
-        type: 'int',
-        name: 'John Doe',
-        org: 'Example Inc.',
-        addr: {
-          street: ['123 Main Street', 'Suite 100'],
-          city: 'New York',
-          sp: 'NY',
-          pc: '10001',
-          cc: 'US'
-        }
-      },
-      voice: '+1.2125551234',
-      email: 'john.doe@example.com',
-      authInfo: {
-        pw: 'contact-password-123'
-      }
-    });
-    console.log(`✓ Contact created: ${contactCreate.data.id}\n`);
-
-    // 5. Create domain
-    console.log('5. Creating domain...');
-    const domainCreate = await client.domainCreate({
-      name: 'test-domain-123.com',
-      period: { value: 1, unit: 'y' },
-      registrant: 'CONTACT123',
-      contacts: [
-        { type: 'admin', id: 'CONTACT123' },
-        { type: 'tech', id: 'CONTACT123' }
-      ],
-      authInfo: {
-        pw: 'domain-password-123'
-      }
-    });
-    console.log(`✓ Domain created: ${domainCreate.data.name}\n`);
-
-    // 6. Check fees
-    console.log('6. Checking fees...');
-    const feeCheck = await client.feeCheck({
-      command: 'create',
-      domain: 'test-domain-123.com',
-      period: { value: 1, unit: 'y' },
-      currency: 'USD'
-    });
-    console.log('Fee check results:');
-    if (feeCheck.data) {
-      console.log(`  Fee: ${JSON.stringify(feeCheck.data)}`);
-    }
-    console.log();
-
-    // 7. Logout
-    console.log('7. Logging out...');
-    await client.logout();
-    console.log('✓ Logout successful\n');
-
-    console.log('=== Demo completed successfully ===');
-
   } catch (error) {
-    console.error('Error:', error);
-    
-    // Ensure logout on error
-    try {
-      await client.logout();
-    } catch (logoutError) {
-      console.error('Logout error:', logoutError);
-    }
+    // A rejected command leaves the session usable.
+    if (!(error instanceof EppCommandError && error.code === EppResultCode.OBJECT_DOES_NOT_EXIST)) throw error;
+    console.log(`  ${domain} does not exist (2303)`);
+  }
+
+  // Contact check (RFC 5733 Section 3.1.1).
+  console.log('\nContact check');
+  const contacts = await client.contactCheck(contactId);
+  for (const result of contacts.data ?? []) {
+    console.log(`  ${result.id}: ${result.available ? 'available' : `in use${result.reason ? ` (${result.reason})` : ''}`}`);
+  }
+
+  // Poll request (RFC 5730 Section 2.9.2.3). "req" leaves the message in
+  // the queue; poll-queue.ts shows how to acknowledge messages.
+  console.log('\nPoll');
+  const poll = await client.poll('req');
+  if (poll.code === EppResultCode.SUCCESS_NO_MESSAGES || !poll.msgQ) {
+    console.log('  no messages');
+  } else {
+    console.log(`  ${poll.msgQ.count} message(s); oldest ${poll.msgQ.id} from ${poll.msgQ.qDate ?? '-'}: ${poll.msgQ.message ?? ''}`);
   }
 }
 
-// Run demo
-main().catch(console.error);
+void run(main);

@@ -1,435 +1,249 @@
-# Quick Start Guide - EPP Client with SSL/TLS
+# Quick start
 
-Panduan cepat untuk mulai menggunakan EPP Client TypeScript dengan SSL/TLS configuration.
+Connect to a registry, register a domain and handle errors with epp-ts in five minutes. The
+[README](README.md) covers the full API.
 
-## 📦 Installation
+## Before you start
+
+- Node.js 18 or later.
+- From your registry: the EPP host name and port (usually 700), your client ID and password, and
+  usually a client certificate and key. Many registries also accept connections only from IP
+  addresses you have registered with them.
+- Develop against the registry's test environment (OT&E), not production.
+
+## Install
 
 ```bash
-npm install epp-client
-# or
-yarn add epp-client
-# or
-pnpm add epp-client
+npm install epp-ts
 ```
 
-## 🚀 5-Minute Quick Start
-
-### 1. Basic Connection (Testing)
+## Connect, check and log out
 
 ```typescript
-import { EppClient } from 'epp-client';
+import { readFileSync } from 'fs';
+import { EppClient } from 'epp-ts';
 
 const client = new EppClient({
-  host: 'epp-test.registry.com',
-  port: 700,
-  username: 'test-user',
-  password: 'test-password',
-  rejectUnauthorized: false, // ⚠️ Only for testing!
-  debug: true
+  host: 'epp.registry.example',
+  username: 'registrar-id',
+  password: process.env.EPP_PASSWORD!,
+  clientCert: readFileSync('client.pem'),      // mutual TLS, when the registry requires it
+  clientKey: readFileSync('client-key.pem'),
 });
 
-async function quickStart() {
+async function main() {
   try {
-    // Connect
-    await client.connect();
-    console.log('✅ Connected');
-    
-    // Login
-    await client.login();
-    console.log('✅ Logged in');
-    
-    // Check domain
-    const result = await client.domainCheck(['example.com']);
-    console.log('Domain availability:', result.data);
-    
-    // Logout
-    await client.logout();
-    console.log('✅ Logged out');
-    
-    // Disconnect
-    await client.disconnect();
-    console.log('✅ Disconnected');
-    
-  } catch (error) {
-    console.error('Error:', error.message);
-    if (client.isConnected()) {
-      await client.disconnect();
+    const greeting = await client.connect();   // TLS handshake, then the server greeting
+    console.log('Connected to', greeting.svID);
+
+    await client.login();                       // announces the services both sides support
+
+    const { data } = await client.domainCheck(['example.com', 'example.net']);
+    for (const result of data ?? []) {
+      console.log(result.name, result.available ? 'available' : `taken (${result.reason ?? 'no reason given'})`);
     }
+
+    await client.logout();
+  } finally {
+    await client.disconnect();
   }
 }
 
-quickStart();
-```
-
-### 2. Production Configuration
-
-```typescript
-import { EppClient } from 'epp-client';
-import * as fs from 'fs';
-
-const client = new EppClient({
-  host: 'epp.registry.com',
-  port: 700,
-  username: process.env.EPP_USERNAME!,
-  password: process.env.EPP_PASSWORD!,
-  
-  // Production SSL Configuration
-  rejectUnauthorized: true,    // MUST be true!
-  minVersion: 'TLSv1.2',
-  maxVersion: 'TLSv1.3',
-  
-  timeout: 30000,
-  debug: false
+main().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
 });
 ```
 
-### 3. With Client Certificates (Mutual TLS)
+The client verifies the server certificate and requires TLS 1.2 or later. If your registry's test
+server uses a self-signed certificate, see
+[TLS configuration](docs/SSL_TLS_CONFIGURATION.md#testing-against-an-ote-server-with-a-self-signed-certificate)
+instead of turning verification off.
+
+The remaining snippets assume a logged-in `client` and run inside an async function.
+
+## Register a domain
+
+A domain's contacts must exist before the domain, and so must its name servers at registries that
+use host objects:
 
 ```typescript
-import { EppClient } from 'epp-client';
-import * as fs from 'fs';
+import { generateAuthInfo } from 'epp-ts';
 
-const client = new EppClient({
-  host: 'epp.registry.com',
-  port: 700,
-  username: process.env.EPP_USERNAME!,
-  password: process.env.EPP_PASSWORD!,
-  
-  // Mutual TLS
-  clientCert: fs.readFileSync('./certs/client-cert.pem'),
-  clientKey: fs.readFileSync('./certs/client-key.pem'),
-  ca: fs.readFileSync('./certs/ca-bundle.pem'),
-  
-  // Optional: If key is encrypted
-  passphrase: process.env.KEY_PASSPHRASE,
-  
-  rejectUnauthorized: true,
-  minVersion: 'TLSv1.2'
-});
-```
-
-## 📖 Common Operations
-
-### Domain Check
-```typescript
-const result = await client.domainCheck([
-  'example.com',
-  'example.net',
-  'example.org'
-]);
-
-result.data.forEach(domain => {
-  console.log(`${domain.name}: ${domain.available ? 'Available' : 'Not available'}`);
-});
-```
-
-### Domain Info
-```typescript
-const info = await client.domainInfo('example.com');
-console.log('Domain:', info.data.name);
-console.log('Status:', info.data.status);
-console.log('Registrant:', info.data.registrant);
-console.log('Expires:', info.data.exDate);
-```
-
-### Domain Create
-```typescript
-const result = await client.domainCreate({
-  name: 'example.com',
-  period: { value: 1, unit: 'y' },
-  registrant: 'CONTACT-ID',
-  contacts: [
-    { type: 'admin', id: 'ADMIN-ID' },
-    { type: 'tech', id: 'TECH-ID' }
-  ],
-  ns: {
-    hostObj: ['ns1.example.com', 'ns2.example.com']
-  },
-  authInfo: { pw: 'strong-auth-code' }
-});
-
-console.log('Domain created:', result.data.name);
-```
-
-### Contact Create
-```typescript
-const result = await client.contactCreate({
-  id: 'CONTACT-001',
+// 1. A contact, used here as registrant, admin and tech contact
+await client.contactCreate({
+  id: 'jdoe-001',                      // 3-16 characters, unique in the registry
   postalInfo: {
     type: 'int',
-    name: 'John Doe',
-    org: 'Example Inc.',
-    addr: {
-      street: ['123 Main Street'],
-      city: 'New York',
-      sp: 'NY',
-      pc: '10001',
-      cc: 'US'
-    }
+    name: 'Jane Doe',
+    addr: { street: ['1 Main St'], city: 'Jakarta', pc: '10110', cc: 'ID' },
   },
-  voice: '+1.2125551234',
-  email: 'john@example.com',
-  authInfo: { pw: 'contact-auth-code' }
+  voice: '+62.215551234',              // +country code, a dot, then the number
+  email: 'jane@example.com',
+  authInfo: { pw: generateAuthInfo() },
 });
 
-console.log('Contact created:', result.data.id);
+// 2. Host objects for the name servers. Hosts outside the registry's zones need no addresses.
+const nameServers = ['ns1.dns-provider.example', 'ns2.dns-provider.example'];
+for (const name of nameServers) {
+  const { data } = await client.hostCheck(name);
+  if (data?.[0]?.available) await client.hostCreate({ name });   // skip hosts that already exist
+}
+
+// 3. The domain
+const { data: domain } = await client.domainCreate({
+  name: 'example.com',
+  period: 1,                           // years
+  registrant: 'jdoe-001',
+  contacts: [{ type: 'admin', id: 'jdoe-001' }, { type: 'tech', id: 'jdoe-001' }],
+  ns: nameServers,
+  authInfo: { pw: generateAuthInfo() },
+});
+console.log(domain?.name, 'expires', domain?.exDate);
 ```
 
-## 🔒 SSL/TLS Configuration Options
+Each registry decides which contacts and fields it requires. Some take name servers as
+attributes instead of host objects (`ns: { hostAttr: [...] }`) and need no `hostCreate`.
 
-### All Available Options
+A name server inside the new domain, such as `ns1.example.com`, needs IP addresses (glue) and can
+only be created once the domain exists:
 
 ```typescript
-interface EppConfig {
-  // Connection (Required)
-  host: string;                     // EPP server hostname
-  port?: number;                    // Default: 700
-  username: string;                 // Client ID
-  password: string;                 // Password
-  
-  // Basic SSL/TLS
-  rejectUnauthorized?: boolean;     // Default: true
-  minVersion?: string;              // Default: 'TLSv1.2'
-  maxVersion?: string;              // Default: 'TLSv1.3'
-  
-  // Mutual TLS (Optional)
-  clientCert?: string | Buffer;     // Client certificate
-  clientKey?: string | Buffer;      // Client private key
-  ca?: string | Buffer | Array;     // CA bundle
-  passphrase?: string;              // Key passphrase
-  
-  // Advanced (Optional)
-  ciphers?: string;                 // Cipher suites
-  servername?: string;              // SNI server name
-  checkServerIdentity?: boolean;    // Default: true
-  
-  // Client Options
-  lang?: string;                    // Default: 'en'
-  version?: string;                 // Default: '1.0'
-  timeout?: number;                 // Default: 30000ms
-  debug?: boolean;                  // Default: false
+await client.hostCreate({ name: 'ns1.example.com', addr: ['192.0.2.1', '2001:db8::1'] });
+await client.domainUpdate({ name: 'example.com', add: { ns: ['ns1.example.com'] } });
+```
+
+## Handle errors
+
+The client's errors are subclasses of `EppError`; check for the specific classes. A client
+certificate or key that cannot be loaded is reported as an `EppConnectionError` whose message
+starts with `Invalid TLS configuration` ([details](docs/SSL_TLS_CONFIGURATION.md#mutual-tls)).
+
+```typescript
+import { EppCommandError, EppConnectionError, EppResultCode, EppTimeoutError, EppValidationError, generateAuthInfo } from 'epp-ts';
+
+try {
+  await client.domainCreate({ name: 'example.com', authInfo: { pw: generateAuthInfo() } });
+} catch (error) {
+  if (error instanceof EppCommandError) {
+    // The server answered with a 2xxx result code
+    if (error.code === EppResultCode.OBJECT_EXISTS) console.log('example.com is taken');
+    else console.error(error.message, error.results.flatMap((result) => result.extValues.map((v) => v.reason)));
+  } else if (error instanceof EppValidationError) {
+    // The client rejected the request; nothing was sent
+    console.error('Invalid request:', error.message);
+  } else if (error instanceof EppConnectionError || error instanceof EppTimeoutError) {
+    // The connection failed or was closed
+    console.error('Connection problem:', error.message);
+  } else {
+    throw error;
+  }
 }
 ```
 
-## 🛠️ Environment Setup
+- `EppCommandError` has the result `code`, a message such as `EPP 2302: Object exists`, and
+  `results` with the registry's reasons. The session stays open, except after codes 2500-2502,
+  when the server closes the connection.
+- `EppValidationError` means the request breaks a schema or RFC rule. Nothing was sent.
+- `EppConnectionError` and `EppTimeoutError` mean the connection failed or was closed. A create,
+  renew, transfer, update or delete may still have reached the registry before the response was
+  lost, so check with an info command before you retry it.
+- `EppProtocolError` means the server sent a malformed frame or document, or a response for
+  another transaction; the client closes the connection.
 
-### 1. Create `.env` file
-```bash
-EPP_HOST=epp.registry.com
-EPP_PORT=700
-EPP_USERNAME=your-username
-EPP_PASSWORD=your-password
-KEY_PASSPHRASE=your-key-passphrase
-```
+See [Error handling in the README](README.md#error-handling) for details.
 
-### 2. Load Environment Variables
+## Long-running services
+
+A service that stays connected should keep its session alive and recover from dropped
+connections:
+
 ```typescript
-import * as dotenv from 'dotenv';
-dotenv.config();
+import { readFileSync } from 'fs';
+import { EppClient } from 'epp-ts';
 
 const client = new EppClient({
-  host: process.env.EPP_HOST!,
-  port: parseInt(process.env.EPP_PORT || '700'),
-  username: process.env.EPP_USERNAME!,
+  host: 'epp.registry.example',
+  username: 'registrar-id',
   password: process.env.EPP_PASSWORD!,
-  passphrase: process.env.KEY_PASSPHRASE
+  clientCert: readFileSync('client.pem'),
+  clientKey: readFileSync('client-key.pem'),
+  keepAliveInterval: 5 * 60 * 1000,    // send <hello> after 5 idle minutes
+  autoReconnect: true,                 // reconnect and log in again before the next command
+});
+
+client.on('close', () => console.warn('EPP connection closed'));
+client.on('reconnect', () => console.info('EPP session restored'));
+
+await client.login();                  // connects first
+
+process.once('SIGTERM', async () => {
+  await client.logout().catch(() => undefined);
+  await client.disconnect();
 });
 ```
 
-## 📝 Error Handling
+- Registries close idle sessions after a time they choose (RFC 5734 Section 9 allows it). Set
+  `keepAliveInterval` below that limit. The keep-alive timer does not keep the Node.js process
+  running by itself.
+- `autoReconnect` applies after a successful `login()` and stops after `logout()` or
+  `disconnect()`. It reconnects before the next command, not as soon as the connection drops. The
+  command that was in flight when the connection dropped fails and is not retried.
+- A client sends one command at a time. Concurrent calls are queued and each gets its own
+  response. For several sessions, create one `EppClient` per session, within the registry's
+  session limit.
 
-### Basic Error Handling
+## Debug logging
+
+`debug: true` logs connection events and every frame to the console:
+
 ```typescript
-try {
-  await client.connect();
-  await client.login();
-  
-  // Your operations here
-  
-  await client.logout();
-  await client.disconnect();
-  
-} catch (error: any) {
-  console.error('EPP Error:', error.code, error.message);
-  
-  // Cleanup
-  if (client.isConnected()) {
-    try {
-      await client.disconnect();
-    } catch (cleanupError) {
-      console.error('Cleanup failed:', cleanupError);
-    }
-  }
-}
+import { EppClient } from 'epp-ts';
+
+const client = new EppClient({ ...config, debug: true });
 ```
 
-### SSL-Specific Error Handling
+```text
+[epp] Connecting to epp.registry.example:700
+[epp] TLS established: TLSv1.3 TLS_AES_256_GCM_SHA384
+[epp] << <?xml version="1.0" encoding="UTF-8" standalone="no"?><epp xmlns="urn:ietf:params:xml:ns:epp-1.0"><greeting>...
+[epp] >> <?xml version="1.0" encoding="UTF-8" standalone="no"?><epp xmlns="urn:ietf:params:xml:ns:epp-1.0"><command><login><clID>registrar-id</clID><pw>***</pw>...
+```
+
+To send the output to your own logger (`log` below), pass `logger`. Setting it turns logging on:
+
 ```typescript
-try {
-  await client.connect();
-} catch (error: any) {
-  if (error.code === 'DEPTH_ZERO_SELF_SIGNED_CERT') {
-    console.error('Self-signed certificate detected');
-    console.error('For testing: set rejectUnauthorized: false');
-    console.error('For production: add CA to trust store');
-  } else if (error.code === 'CERT_HAS_EXPIRED') {
-    console.error('Certificate has expired');
-  } else if (error.code === 'ERR_TLS_CERT_ALTNAME_INVALID') {
-    console.error('Certificate hostname mismatch');
-  } else {
-    console.error('Connection error:', error.message);
-  }
-}
+import { EppClient } from 'epp-ts';
+
+const client = new EppClient({
+  ...config,
+  logger: {
+    debug: (message) => log.debug(message),
+    warn: (message) => log.warn(message),   // disabled certificate checks, failed keep-alives, login security events
+  },
+});
 ```
 
-## 🎯 Common Use Cases
+Logged frames have passwords (`<pw>`, `<newPW>` and their loginSec equivalents), authorization
+info (`<domain:pw>`, `<contact:pw>`) and allocation tokens replaced with `***`. `response.xml` is
+the raw response and is not redacted. Pass it through `redactXml()` before you log it yourself:
 
-### 1. Check Multiple Domains
 ```typescript
-async function checkDomains(domains: string[]) {
-  await client.connect();
-  await client.login();
-  
-  const result = await client.domainCheck(domains);
-  
-  await client.logout();
-  await client.disconnect();
-  
-  return result.data;
-}
+import { redactXml } from 'epp-ts';
+
+const info = await client.domainInfo('example.com', { authInfo: 'domain-auth-code' });
+log.info(redactXml(info.xml));         // <domain:pw>***</domain:pw>
 ```
 
-### 2. Register Domain (Complete Flow)
-```typescript
-async function registerDomain(domainName: string) {
-  await client.connect();
-  await client.login();
-  
-  // 1. Check availability
-  const check = await client.domainCheck([domainName]);
-  if (!check.data[0].available) {
-    throw new Error('Domain not available');
-  }
-  
-  // 2. Create contacts
-  const registrant = await client.contactCreate({
-    id: 'REG-001',
-    // ... contact details
-  });
-  
-  // 3. Create domain
-  const domain = await client.domainCreate({
-    name: domainName,
-    period: { value: 1, unit: 'y' },
-    registrant: registrant.data.id,
-    // ... other details
-  });
-  
-  await client.logout();
-  await client.disconnect();
-  
-  return domain.data;
-}
-```
+## Next steps
 
-### 3. Transfer Domain
-```typescript
-async function transferDomain(domainName: string, authCode: string) {
-  await client.connect();
-  await client.login();
-  
-  const result = await client.domainTransfer({
-    name: domainName,
-    op: 'request',
-    authInfo: { pw: authCode },
-    period: { value: 1, unit: 'y' }
-  });
-  
-  await client.logout();
-  await client.disconnect();
-  
-  return result;
-}
-```
-
-## 🧪 Testing
-
-### Run Examples
-```bash
-# Basic usage
-npm run example:basic
-
-# TLS/TCP connection
-npm run example:tls
-
-# SSL configurations
-npm run example:ssl
-
-# Complete domain registration
-npm run example:domain
-
-# Domain transfer
-npm run example:transfer
-
-# Run all examples
-npm run example:all
-```
-
-### Run Tests
-```bash
-# Run all tests
-npm test
-
-# Run with coverage
-npm run test:coverage
-
-# Watch mode
-npm run test:watch
-```
-
-## 📚 Next Steps
-
-1. **Read Documentation**
-   - [SSL/TLS Configuration Guide](../docs/SSL_TLS_CONFIGURATION.md)
-   - [RFC Documentation](../docs/RFC_DOCUMENTATION.md)
-   - [TLS/TCP Implementation](../docs/TLS_TCP_IMPLEMENTATION.md)
-
-2. **Explore Examples**
-   - Check `/examples` folder
-   - Run examples dengan `npm run example:*`
-   - Read [Examples README](../examples/README.md)
-
-3. **Configuration**
-   - Set up certificates for mutual TLS
-   - Configure environment variables
-   - Test in development environment
-
-4. **Production Deployment**
-   - Use proper CA-signed certificates
-   - Enable certificate validation
-   - Set up monitoring and logging
-   - Follow security best practices
-
-## 🔗 Resources
-
-- **Repository**: [github.com/al0fayz/epp-ts](https://github.com/al0fayz/epp-ts)
-- **RFC 5730**: EPP Core Protocol
-- **RFC 5731**: EPP Domain Mapping
-- **RFC 5734**: EPP Transport over TCP
-
-## ❓ Need Help?
-
-1. Check [Troubleshooting Guide](../docs/SSL_TLS_CONFIGURATION.md#troubleshooting)
-2. Review [Examples](../examples/)
-3. Enable debug mode: `debug: true`
-4. Read error messages carefully
-5. Consult RFC documentation
-
-## 📄 License
-
-MIT License - see LICENSE file for details
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: December 2025
+- [README](README.md): every configuration option and command, the poll queue, fees, sunrise and
+  claims.
+- [docs/SSL_TLS_CONFIGURATION.md](docs/SSL_TLS_CONFIGURATION.md): certificates, custom CAs, test
+  servers and TLS errors.
+- [docs/DNSSEC_GUIDE.md](docs/DNSSEC_GUIDE.md): DS and key data, key rollovers.
+- [docs/EPP_EXTENSIONS.md](docs/EPP_EXTENSIONS.md): grace-period restores, launch phases, fees and
+  the other extensions.
+- [docs/COMPLIANCE.md](docs/COMPLIANCE.md): the standards epp-ts implements and how they map to
+  ICANN requirements.
+- [examples/](examples/): complete workflows to run against your registry's OT&E environment.

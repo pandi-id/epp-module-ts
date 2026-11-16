@@ -1,60 +1,86 @@
 {
-    "name": "epp-client",
+    "name": "epp-ts",
     "version": "1.0.0",
-    "description": "Professional EPP Client for Domain Registry Operations",
+    "description": "RFC-compliant EPP client for Node.js: domains, contacts, hosts, DNSSEC, RGP restores, ICANN sunrise and claims (TMCH), and registry fees",
+    "keywords": [
+        "epp",
+        "rfc5730",
+        "rfc5731",
+        "rfc5732",
+        "rfc5733",
+        "rfc5734",
+        "registrar",
+        "registry",
+        "domain",
+        "icann",
+        "dnssec",
+        "tmch",
+        "typescript"
+    ],
+    "license": "MIT",
+    "author": "Ahmad Ropai",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/al0fayz/epp-ts.git"
+    },
+    "homepage": "https://github.com/al0fayz/epp-ts#readme",
+    "bugs": {
+        "url": "https://github.com/al0fayz/epp-ts/issues"
+    },
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.d.ts",
+            "default": "./dist/index.js"
+        },
+        "./package.json": "./package.json"
+    },
+    "files": [
+        "dist",
+        "README.md",
+        "CHANGELOG.md",
+        "LICENSE"
+    ],
+    "sideEffects": false,
+    "engines": {
+        "node": ">=18"
+    },
     "scripts": {
-        "build": "tsc",
+        "clean": "node -e \"require('fs').rmSync('dist', { recursive: true, force: true })\"",
+        "build": "npm run clean && tsc -p tsconfig.build.json",
+        "typecheck": "tsc -p tsconfig.json",
         "test": "jest",
         "test:watch": "jest --watch",
         "test:coverage": "jest --coverage",
-        "lint": "eslint src/**/*.ts test/**/*.ts",
-        "lint:fix": "eslint src/**/*.ts test/**/*.ts --fix",
-        "example": "ts-node examples/basic-usage.ts",
+        "lint": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\"",
+        "lint:fix": "eslint \"src/**/*.ts\" \"test/**/*.ts\" \"examples/**/*.ts\" --fix",
         "example:basic": "ts-node examples/basic-usage.ts",
         "example:tls": "ts-node examples/tls-tcp-connection.ts",
         "example:ssl": "ts-node examples/ssl-configurations.ts",
         "example:domain": "ts-node examples/complete-domain-registration.ts",
         "example:transfer": "ts-node examples/domain-transfer.ts",
         "example:dnssec": "ts-node examples/dnssec-operations.ts",
-        "example:all": "npm run example:basic && npm run example:tls && npm run example:ssl",
-        "prepublishOnly": "npm run build && npm test"
+        "example:extensions": "ts-node examples/epp-extensions.ts",
+        "example:poll": "ts-node examples/poll-queue.ts",
+        "example:all": "ts-node examples/run-all-examples.ts",
+        "prepack": "npm run build",
+        "prepublishOnly": "npm run lint && npm run typecheck && npm test"
     },
-    "keywords": [
-        "epp",
-        "domain",
-        "registry",
-        "rfc",
-        "typescript"
-    ],
-    "author": "Your Name",
-    "license": "MIT",
     "dependencies": {
-        "axios": "^1.6.0",
-        "xml2js": "^0.6.2"
+        "sax": "^1.4.1"
     },
     "devDependencies": {
         "@types/jest": "^29.5.0",
-        "@types/xml2js": "^0.4.14",
+        "@types/node": "^18.19.130",
+        "@types/sax": "^1.2.7",
         "@typescript-eslint/eslint-plugin": "^6.0.0",
         "@typescript-eslint/parser": "^6.0.0",
         "eslint": "^8.0.0",
         "jest": "^29.5.0",
         "ts-jest": "^29.1.0",
         "ts-node": "^10.9.0",
-        "typescript": "^5.0.0"
-    },
-    "peerDependencies": {
-        "typescript": "^5.0.0"
-    },
-    "files": [
-        "dist",
-        "README.md",
-        "LICENSE"
-    ],
-    "repository": {
-        "type": "git",
-        "url": "https://github.com/your-username/epp-client.git"
+        "typescript": "^5.0.0",
+        "xmllint-wasm": "^5.3.0"
     }
 }

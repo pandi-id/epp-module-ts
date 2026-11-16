@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <response>
+    <result code="1000"><msg>Command completed successfully</msg></result>
+    <resData>
+      <domain:infData xmlns:domain="urn:ietf:params:xml:ns:domain-1.0">
+        <domain:name>example.com</domain:name>
+        <domain:roid>EXAMPLE2-REP</domain:roid>
+        <domain:ns>
+          <domain:hostAttr>
+            <domain:hostName>ns1.example.com</domain:hostName>
+            <domain:hostAddr ip="v4">192.0.2.2</domain:hostAddr>
+            <domain:hostAddr ip="v6">1080:0:0:0:8:800:200C:417A</domain:hostAddr>
+          </domain:hostAttr>
+          <domain:hostAttr>
+            <domain:hostName>ns2.example.net</domain:hostName>
+          </domain:hostAttr>
+        </domain:ns>
+        <domain:clID>ClientX</domain:clID>
+      </domain:infData>
+    </resData>
+    <trID><svTRID>54322-XYZ</svTRID></trID>
+  </response>
+</epp>

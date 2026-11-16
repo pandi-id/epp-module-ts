@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<epp xmlns="urn:ietf:params:xml:ns:epp-1.0">
+  <greeting>
+    <svID>Example EPP server epp.example.com</svID>
+    <svDate>2000-06-08T22:00:00.0Z</svDate>
+    <svcMenu>
+      <version>1.0</version>
+      <lang>en</lang>
+      <lang>fr</lang>
+      <objURI>urn:ietf:params:xml:ns:domain-1.0</objURI>
+      <objURI>urn:ietf:params:xml:ns:host-1.0</objURI>
+      <svcExtension>
+        <extURI>urn:ietf:params:xml:ns:secDNS-1.1</extURI>
+        <extURI>urn:ietf:params:xml:ns:rgp-1.0</extURI>
+        <extURI>http://custom/obj1ext-1.0</extURI>
+      </svcExtension>
+    </svcMenu>
+    <dcp>
+      <access><all/></access>
+      <statement>
+        <purpose><admin/><prov/></purpose>
+        <recipient><ours/><public/></recipient>
+        <retention><stated/></retention>
+      </statement>
+      <expiry><relative>P1Y</relative></expiry>
+    </dcp>
+  </greeting>
+</epp>

@@ -1,175 +1,44 @@
-/**
- * EPP TMCH (Trademark Clearinghouse) Extension Types
- * Referensi: ICANN TMCH Functional Specifications
- * 
- * TMCH extension untuk validasi trademark claims dan sunrise applications.
- */
+import { EppValidationError } from '../core/Errors';
 
 /**
- * TMCH Mark Type
+ * Trademark Clearinghouse (TMCH) types and helpers for ICANN sunrise and
+ * claims processing: mark objects (RFC 7848), Signed Mark Data files and
+ * Trademark Claims Notice identifiers (RFC 9361).
  */
-export type TmchMarkType = 
-  | 'trademark'           // Registered trademark
-  | 'treatyOrStatute'     // Treaty or statute protection
-  | 'court';              // Court-validated mark
 
-/**
- * TMCH Document Type
- */
-export type TmchDocumentType =
-  | 'tmLaw'              // Trademark law
-  | 'tmOther'            // Other trademark document
-  | 'declaration'        // Declaration
-  | 'other';             // Other document type
+/** Kind of mark (RFC 7848 Section 2.2). */
+export type TmchMarkType = 'trademark' | 'treatyOrStatute' | 'court';
 
-/**
- * TMCH Contact Type
- */
-export type TmchContactType =
-  | 'owner'              // Trademark owner
-  | 'agent'              // Agent/representative
-  | 'thirdparty';        // Third party
+export type TmchDocumentType = 'tmLaw' | 'tmOther' | 'declaration' | 'other';
 
-/**
- * TMCH Trademark Data
- * Referensi: TMCH Functional Specs Section 3
- */
+/** Contact role (RFC 7848 Section 2.2.1). */
+export type TmchContactType = 'owner' | 'agent' | 'thirdparty';
+
+/** A mark (RFC 7848 Section 2.2). */
 export interface TmchMark {
-  /**
-   * Mark identifier (SMD ID)
-   */
+  /** Mark identifier, e.g. "00052013734689731373681096-65535". */
   id: string;
-  
-  /**
-   * Mark type
-   */
   markType: TmchMarkType;
-  
-  /**
-   * Mark name/text
-   */
   markName: string;
-  
-  /**
-   * Trademark holder information
-   */
   holder: TmchHolder[];
-  
-  /**
-   * Contact information
-   */
   contact?: TmchContact[];
-  
-  /**
-   * Jurisdiction (country code)
-   * ISO 3166-1 alpha-2
-   */
+  /** Two-letter jurisdiction code. */
   jurisdiction?: string;
-  
-  /**
-   * Nice classification classes
-   */
+  /** Nice classification classes (1-45). */
   class?: number[];
-  
-  /**
-   * Trademark labels
-   */
+  /** DNS labels covered by the mark. */
   label?: string[];
-  
-  /**
-   * Goods and services
-   */
   goodsAndServices?: string;
-  
-  /**
-   * Application/registration number
-   */
   regNum?: string;
-  
-  /**
-   * Application date
-   */
   apDate?: string;
-  
-  /**
-   * Registration date
-   */
   regDate?: string;
-  
-  /**
-   * Expiration date
-   */
   exDate?: string;
 }
 
-/**
- * TMCH Holder Information
- */
+/** Mark holder (RFC 7848 Section 2.2.1). */
 export interface TmchHolder {
-  /**
-   * Holder name
-   */
   name?: string;
-  
-  /**
-   * Organization name
-   */
   org?: string;
-  
-  /**
-   * Address information
-   */
-  addr?: {
-    street?: string[];
-    city?: string;
-    sp?: string;        // State/province
-    pc?: string;        // Postal code
-    cc: string;         // Country code
-  };
-  
-  /**
-   * Voice phone
-   */
-  voice?: string;
-  
-  /**
-   * Fax number
-   */
-  fax?: string;
-  
-  /**
-   * Email address
-   */
-  email?: string;
-  
-  /**
-   * Entitlement (individual, organization, etc.)
-   */
-  entitlement?: string;
-}
-
-/**
- * TMCH Contact Information
- */
-export interface TmchContact {
-  /**
-   * Contact type
-   */
-  type: TmchContactType;
-  
-  /**
-   * Contact name
-   */
-  name: string;
-  
-  /**
-   * Organization
-   */
-  org?: string;
-  
-  /**
-   * Address
-   */
   addr?: {
     street?: string[];
     city?: string;
@@ -177,251 +46,221 @@ export interface TmchContact {
     pc?: string;
     cc: string;
   };
-  
-  /**
-   * Voice phone
-   */
   voice?: string;
-  
-  /**
-   * Fax
-   */
   fax?: string;
-  
-  /**
-   * Email
-   */
+  email?: string;
+  /** "owner", "assignee" or "licensee". */
+  entitlement?: string;
+}
+
+/** Mark contact (RFC 7848 Section 2.2.1). */
+export interface TmchContact {
+  type: TmchContactType;
+  name: string;
+  org?: string;
+  addr?: {
+    street?: string[];
+    city?: string;
+    sp?: string;
+    pc?: string;
+    cc: string;
+  };
+  voice?: string;
+  fax?: string;
   email: string;
 }
 
-/**
- * TMCH Document
- */
 export interface TmchDocument {
-  /**
-   * Document type
-   */
   docType: TmchDocumentType;
-  
-  /**
-   * File name
-   */
   fileName: string;
-  
-  /**
-   * File type/MIME type
-   */
   fileType: string;
-  
-  /**
-   * Base64-encoded file content
-   */
   fileContent: string;
 }
 
-/**
- * TMCH Claims Notice
- * Referensi: TMCH Functional Specs Section 5
- */
+/** Trademark Claims Notice (RFC 9361 Section 6.5). */
 export interface TmchClaimsNotice {
-  /**
-   * Notice ID
-   * Format: YYYY-MM-DDTHH:mm:ss.sssZ-xxxxxxxx
-   */
+  /** TCNID. */
   id: string;
-  
-  /**
-   * Notice expiration timestamp
-   * ISO 8601 format
-   */
   notAfter: string;
-  
-  /**
-   * Notice acceptance timestamp
-   * ISO 8601 format
-   */
   acceptedDate: string;
-  
-  /**
-   * Label that triggered the notice
-   */
   label: string;
-  
-  /**
-   * Trademark claims
-   */
   claims?: TmchClaim[];
 }
 
-/**
- * TMCH Claim
- */
 export interface TmchClaim {
-  /**
-   * Mark identifier
-   */
   markName: string;
-  
-  /**
-   * Jurisdiction
-   */
   jurisdiction: string;
-  
-  /**
-   * Goods and services
-   */
   goodsAndServices?: string;
-  
-  /**
-   * Holder name
-   */
   holderName?: string;
-  
-  /**
-   * Contact email
-   */
   holderEmail?: string;
 }
 
-/**
- * SMD (Signed Mark Data) File
- * Referensi: TMCH Functional Specs Section 4
- */
+/** Signed Mark Data. */
 export interface TmchSMD {
-  /**
-   * SMD ID
-   */
   id: string;
-  
-  /**
-   * Issuer (TMCH provider)
-   */
   issuer: string;
-  
-  /**
-   * Not before timestamp
-   */
   notBefore: string;
-  
-  /**
-   * Not after timestamp
-   */
   notAfter: string;
-  
-  /**
-   * Base64-encoded signed mark data
-   */
   encodedSignedMark: string;
 }
 
-/**
- * TMCH Sunrise Application
- */
 export interface TmchSunriseApplication {
-  /**
-   * Domain name being applied for
-   */
   name: string;
-  
-  /**
-   * SMD file(s)
-   */
   smd: TmchSMD[];
-  
-  /**
-   * Application ID (assigned by registry)
-   */
   applicationID?: string;
 }
 
-/**
- * TMCH Claims Check Request
- */
 export interface TmchClaimsCheckRequest {
-  /**
-   * Domain names to check for claims
-   */
   names: string[];
 }
 
-/**
- * TMCH Claims Check Result
- */
 export interface TmchClaimsCheckResult {
-  /**
-   * Domain name checked
-   */
   name: string;
-  
-  /**
-   * Whether claims exist
-   */
   claimsExist: boolean;
-  
-  /**
-   * Claim key for retrieving notice
-   */
   claimKey?: string;
 }
 
-/**
- * TMCH Validation Result
- */
 export interface TmchValidationResult {
-  /**
-   * Whether SMD is valid
-   */
   valid: boolean;
-  
-  /**
-   * Validation code
-   */
   code?: string;
-  
-  /**
-   * Validation message
-   */
   message?: string;
-  
-  /**
-   * Mark details (if valid)
-   */
   mark?: TmchMark;
 }
 
-/**
- * TMCH namespace
- */
-export const TMCH_NAMESPACE = 'urn:ietf:params:xml:ns:tmch-1.0';
+/** Contents of an SMD file (RFC 9361 Section 6.4). */
+export interface SmdFile {
+  marks: string;
+  smdID: string;
+  uLabels: string[];
+  notBefore: string;
+  notAfter: string;
+  /** Base64 encoded signed mark from between the boundaries, whitespace removed. */
+  encodedSignedMark: string;
+}
+
+/** RFC 7848 mark namespace. */
+export const MARK_NAMESPACE = 'urn:ietf:params:xml:ns:mark-1.0';
+/** RFC 7848 signed mark namespace. */
+export const SIGNED_MARK_NAMESPACE = 'urn:ietf:params:xml:ns:signedMark-1.0';
 
 /**
- * Validate SMD format
+ * Whether the value has the RFC 7848 identifier format used by marks and
+ * SMDs: digits, a hyphen, digits (for example "1-2").
  */
 export function isValidSMDFormat(smdId: string): boolean {
-  // SMD ID format: YYYYMMDD-XXXXXX-XXXX
-  const smdPattern = /^\d{8}-[A-Z0-9]{6}-\d{4}$/;
-  return smdPattern.test(smdId);
+  return /^\d+-\d+$/.test(smdId);
 }
 
 /**
- * Validate Notice ID format
+ * Whether the value has the TCNID format of RFC 9361 Section 6.5: an
+ * 8-character hexadecimal checksum followed by a 19-digit TMDB notice
+ * identifier, e.g. "370d0b7c9223372036854775807".
  */
 export function isValidNoticeID(noticeId: string): boolean {
-  // Notice ID format: YYYY-MM-DDTHH:mm:ss.sssZ-xxxxxxxx
-  const noticePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z-[a-f0-9]{8}$/;
-  return noticePattern.test(noticeId);
+  return /^[0-9a-fA-F]{8}\d{19}$/.test(noticeId);
 }
 
 /**
- * Check if trademark is expired
+ * Compute a TCN checksum (RFC 9361 Section 6.5): the CRC32 of the label, the
+ * notice expiry as Unix time, and the TMDB notice identifier, as 8 lowercase
+ * hex digits.
  */
+export function computeTcnChecksum(label: string, notAfter: string | Date, tmdbNoticeId: string): string {
+  const unixTime = Math.floor(toDate(notAfter, 'notAfter').getTime() / 1000);
+  return crc32(`${label}${unixTime}${tmdbNoticeId}`).toString(16).padStart(8, '0');
+}
+
+/**
+ * Verify a TCNID against the domain being registered and the notice expiry,
+ * as registries do (RFC 9361 Section 5.3.2). `domainOrLabel` may be the full
+ * domain name; its leftmost label (in A-label form) is used.
+ */
+export function verifyTcnId(tcnId: string, domainOrLabel: string, notAfter: string | Date): boolean {
+  if (!isValidNoticeID(tcnId)) return false;
+  const label = domainOrLabel.split('.')[0].toLowerCase();
+  return computeTcnChecksum(label, notAfter, tcnId.slice(8)) === tcnId.slice(0, 8).toLowerCase();
+}
+
+/** Whether the mark's expiration date has passed. */
 export function isTmchMarkExpired(exDate: string): boolean {
   return new Date(exDate) < new Date();
 }
 
-/**
- * Validate Nice Classification class
- */
+/** Whether the number is a Nice classification class (1-45). */
 export function isValidNiceClass(classNumber: number): boolean {
-  return classNumber >= 1 && classNumber <= 45;
+  return Number.isInteger(classNumber) && classNumber >= 1 && classNumber <= 45;
+}
+
+const SMD_BEGIN = '-----BEGIN ENCODED SMD-----';
+const SMD_END = '-----END ENCODED SMD-----';
+
+/**
+ * Return the base64 encoded signed mark from an SMD file, ready for
+ * `launch.encodedSignedMark`. Only the data between the encapsulation
+ * boundaries is used (RFC 9361 Section 6.4). Plain base64 input is returned
+ * with whitespace removed.
+ *
+ * @throws {EppValidationError} when no encoded SMD is found.
+ */
+export function extractEncodedSmd(content: string): string {
+  const begin = content.indexOf(SMD_BEGIN);
+  if (begin === -1) {
+    const compact = content.replace(/\s+/g, '');
+    if (compact && /^[A-Za-z0-9+/]+=*$/.test(compact)) return compact;
+    throw new EppValidationError('No "-----BEGIN ENCODED SMD-----" boundary found in SMD file');
+  }
+  const end = content.indexOf(SMD_END, begin);
+  if (end === -1) throw new EppValidationError('No "-----END ENCODED SMD-----" boundary found in SMD file');
+  const encoded = content.slice(begin + SMD_BEGIN.length, end).replace(/\s+/g, '');
+  if (!encoded || !/^[A-Za-z0-9+/]+=*$/.test(encoded)) {
+    throw new EppValidationError('SMD file does not contain valid base64 between its boundaries');
+  }
+  return encoded;
+}
+
+/**
+ * Parse an SMD file (RFC 9361 Section 6.4): the header lines and the
+ * encoded signed mark.
+ *
+ * @throws {EppValidationError} when a required line or the encoded SMD is missing.
+ */
+export function parseSmdFile(content: string): SmdFile {
+  const header = content.slice(0, Math.max(0, content.indexOf(SMD_BEGIN)));
+  const field = (name: string): string => {
+    const match = header.match(new RegExp(`^\\s*${name}:[ \\t]*(.*)$`, 'm'));
+    if (!match) throw new EppValidationError(`SMD file is missing the "${name}:" line`);
+    return match[1].trim();
+  };
+  return {
+    marks: field('Marks'),
+    smdID: field('smdID'),
+    uLabels: field('U-labels').split(',').map((label) => label.trim()).filter(Boolean),
+    notBefore: field('notBefore'),
+    notAfter: field('notAfter'),
+    encodedSignedMark: extractEncodedSmd(content),
+  };
+}
+
+function toDate(value: string | Date, name: string): Date {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new EppValidationError(`${name} is not a valid date`);
+  return date;
+}
+
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(input: string): number {
+  let crc = 0xffffffff;
+  for (const byte of Buffer.from(input, 'utf8')) {
+    crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
 }

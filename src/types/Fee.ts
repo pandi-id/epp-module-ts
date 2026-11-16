@@ -1,413 +1,180 @@
-/**
- * EPP Fee Extension Types
- * Referensi: RFC 8748 - EPP Fee Extension
- * 
- * Fee extension memungkinkan clients untuk query dan receive information
- * tentang fees yang terkait dengan EPP commands.
- */
+import type { Period, PeriodInput } from './Common';
 
 /**
- * Fee Command Types
- * Referensi: RFC 8748 Section 3.1
+ * Registry Fee extension types and helpers (RFC 8748, namespace
+ * urn:ietf:params:xml:ns:epp:fee-1.0).
  */
-export type FeeCommand = 
-  | 'create'
-  | 'renew'
-  | 'transfer'
-  | 'restore'
-  | 'update';
 
-/**
- * Fee Currency Codes
- * ISO 4217 3-letter currency codes
- */
-export type FeeCurrency = string; // 'USD', 'EUR', 'IDR', etc.
+/** Commands that can carry a fee. */
+export type FeeCommand = 'create' | 'renew' | 'transfer' | 'restore' | 'update';
 
-/**
- * Fee Period
- * Referensi: RFC 8748 Section 3.2
- */
+/** Command names accepted in a fee check (RFC 8748 Section 3.1). */
+export type FeeCommandName = FeeCommand | 'delete' | 'custom';
+
+export type FeeCurrency = string;
+
 export interface FeePeriod {
-  /**
-   * Number of units
-   */
   value: number;
-  
-  /**
-   * Unit type: years or months
-   */
   unit: 'y' | 'm';
 }
 
-/**
- * Fee Structure
- * Referensi: RFC 8748 Section 3.3
- */
+/** A fee (RFC 8748 Section 3.4). */
 export interface Fee {
-  /**
-   * Fee amount
-   * Decimal string (e.g., "10.00")
-   */
+  /** Amount, as a decimal string. */
   fee: string;
-  
-  /**
-   * Fee description/name
-   */
   description?: string;
-  
-  /**
-   * Whether fee is refundable
-   */
+  lang?: string;
   refundable?: boolean;
-  
-  /**
-   * Grace period for refund (in format like "P5D" for 5 days)
-   */
+  /** Grace period as an xs:duration, e.g. "P5D". */
   gracePeriod?: string;
-  
-  /**
-   * Applied status
-   * - immediate: Fee charged immediately
-   * - delayed: Fee charged later
-   */
   applied?: 'immediate' | 'delayed';
 }
 
-/**
- * Fee Check Request
- * Referensi: RFC 8748 Section 4.1
- */
-export interface FeeCheckRequest {
-  /**
-   * Domain name(s) to check
-   */
-  domain?: string | string[];
-  
-  /**
-   * Command type
-   */
-  command: FeeCommand;
-  
-  /**
-   * Period for the operation
-   */
-  period?: FeePeriod;
-  
-  /**
-   * Currency code
-   */
-  currency?: FeeCurrency;
-  
-  /**
-   * Fee class (for tiered pricing)
-   */
-  class?: string;
+/** A credit: a negative amount (RFC 8748 Section 3.4). */
+export interface FeeCredit {
+  amount: string;
+  description?: string;
+  lang?: string;
 }
 
-/**
- * Fee Check Result
- * Referensi: RFC 8748 Section 4.1
- */
-export interface FeeCheckResult {
-  /**
-   * Domain name
-   */
-  domain: string;
-  
-  /**
-   * Command type
-   */
-  command: FeeCommand;
-  
-  /**
-   * Period
-   */
-  period?: FeePeriod;
-  
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
-  class?: string;
-  
-  /**
-   * Whether domain is available at this price
-   */
-  avail?: boolean;
-  
-  /**
-   * Reason if not available
-   */
+/** A command to price in a fee check. */
+export interface FeeCheckCommand {
+  name: FeeCommandName;
+  /** Name of a custom command, when `name` is "custom". */
+  customName?: string;
+  phase?: string;
+  subphase?: string;
+  period?: PeriodInput;
+}
+
+/** Fee check data added to a domain check (RFC 8748 Section 5.1.1). */
+export interface FeeCheckExtension {
+  currency?: FeeCurrency;
+  commands: Array<FeeCommandName | FeeCheckCommand>;
+}
+
+/** Request for `EppClient.feeCheck()`. */
+export interface FeeCheckRequest {
+  /** Domain name(s) to price. */
+  domain: string | string[];
+  /** Command(s) to price. Defaults to "create". */
+  command?: FeeCommandName | FeeCheckCommand | Array<FeeCommandName | FeeCheckCommand>;
+  /** Period applied to commands given by name. */
+  period?: PeriodInput;
+  currency?: FeeCurrency;
+}
+
+/** Fee the client agrees to pay for a transform command (RFC 8748 Section 5.2). */
+export interface FeeSubmission {
+  currency?: FeeCurrency;
+  /** Total amount, written as a single `<fee:fee>` element. */
+  amount?: string | number;
+  /** Individual fees, instead of `amount`. */
+  fees?: Fee[];
+}
+
+/** Price of one command for one object. */
+export interface FeeCommandResult {
+  name: FeeCommandName;
+  customName?: string;
+  phase?: string;
+  subphase?: string;
+  /** Whether this is the standard (non-premium) price. */
+  standard: boolean;
+  period?: Period;
+  fees: Fee[];
+  credits: FeeCredit[];
   reason?: string;
 }
 
-/**
- * Fee Info Response
- * Referensi: RFC 8748 Section 4.2
- */
-export interface FeeInfo {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Period
-   */
-  period?: FeePeriod;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
+/** Fee information for one object in a fee check response. */
+export interface FeeCheckItem {
+  objID: string;
+  /** False when the server cannot price the object; see `reason`. */
+  available: boolean;
+  /** Fee class, e.g. "premium". */
   class?: string;
+  commands: FeeCommandResult[];
+  reason?: string;
 }
 
-/**
- * Fee Create Request
- * Referensi: RFC 8748 Section 4.3
- */
-export interface FeeCreateRequest {
-  /**
-   * Currency code
-   */
+/** Fee check response (`<fee:chkData>`). */
+export interface FeeCheckData {
   currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
-  class?: string;
+  items: FeeCheckItem[];
 }
 
-/**
- * Fee Renew Request
- * Referensi: RFC 8748 Section 4.4
- */
-export interface FeeRenewRequest {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
-  class?: string;
-}
-
-/**
- * Fee Transfer Request
- * Referensi: RFC 8748 Section 4.5
- */
-export interface FeeTransferRequest {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Period
-   */
-  period?: FeePeriod;
-  
-  /**
-   * Fee class
-   */
-  class?: string;
-}
-
-/**
- * Fee Update Request
- * Referensi: RFC 8748 Section 4.6
- */
-export interface FeeUpdateRequest {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
-  class?: string;
-}
-
-/**
- * Fee Restore Request
- */
-export interface FeeRestoreRequest {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Fee details
-   */
-  fee: Fee[];
-  
-  /**
-   * Fee class
-   */
-  class?: string;
-}
-
-/**
- * Fee Delete Response
- * Referensi: RFC 8748 Section 4.7
- */
-export interface FeeDeleteResponse {
-  /**
-   * Currency code
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Credit amount (if any)
-   */
-  credit?: string;
-  
-  /**
-   * Credit description
-   */
-  creditDescription?: string;
-  
-  /**
-   * Balance after delete
-   */
+/** Fee data returned by a transform command (`<fee:creData>` and similar). */
+export interface FeeTransformData {
+  currency?: FeeCurrency;
+  period?: Period;
+  fees: Fee[];
+  credits: FeeCredit[];
   balance?: string;
-}
-
-/**
- * Fee Credit
- * For refunds or credits
- */
-export interface FeeCredit {
-  /**
-   * Credit amount
-   */
-  amount: string;
-  
-  /**
-   * Description
-   */
-  description?: string;
-  
-  /**
-   * Currency
-   */
-  currency: FeeCurrency;
-}
-
-/**
- * Fee Balance
- * Account balance information
- */
-export interface FeeBalance {
-  /**
-   * Current balance
-   */
-  amount: string;
-  
-  /**
-   * Currency
-   */
-  currency: FeeCurrency;
-  
-  /**
-   * Credit limit (if any)
-   */
   creditLimit?: string;
-  
-  /**
-   * Available credit
-   */
-  availableCredit?: string;
 }
 
-/**
- * Fee namespace
- */
 export const FEE_NAMESPACE = 'urn:ietf:params:xml:ns:epp:fee-1.0';
-export const FEE_NAMESPACE_0_11 = 'urn:ietf:params:xml:ns:fee-0.11';
 
-/**
- * Validate currency code (ISO 4217)
- */
+/** Whether the code is three uppercase letters, the ISO 4217 format. */
 export function isValidCurrencyCode(code: string): boolean {
   return /^[A-Z]{3}$/.test(code);
 }
 
-/**
- * Parse fee amount to number
- */
 export function parseFeeAmount(amount: string): number {
   return parseFloat(amount);
 }
 
-/**
- * Format fee amount
- */
-export function formatFeeAmount(amount: number, decimals: number = 2): string {
+export function formatFeeAmount(amount: number, decimals = 2): string {
   return amount.toFixed(decimals);
 }
 
 /**
- * Calculate total fees
+ * Sum of the given fees. The sum is computed in exact decimal arithmetic and
+ * converted to a number at the end; use {@link sumFeeAmounts} to keep it
+ * exact.
  */
 export function calculateTotalFees(fees: Fee[]): number {
-  return fees.reduce((total, fee) => total + parseFeeAmount(fee.fee), 0);
+  const exact = sumFeeAmounts(fees);
+  return exact === undefined ? fees.reduce((total, fee) => total + parseFeeAmount(fee.fee), 0) : Number(exact);
 }
 
 /**
- * Parse grace period duration
- * Format: ISO 8601 duration (e.g., "P5D" for 5 days)
+ * Exact decimal sum of the given fees, e.g. "10.30" for "10.10" and "0.20".
+ * Returns undefined when an amount is not a decimal number.
+ */
+export function sumFeeAmounts(fees: Array<Pick<Fee, 'fee'>>): string | undefined {
+  const parsed: Array<{ negative: boolean; digits: string; scale: number }> = [];
+  for (const { fee } of fees) {
+    const match = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(fee.trim());
+    if (!match || (match[2] === '' && !match[3])) return undefined;
+    parsed.push({ negative: match[1] === '-', digits: `${match[2]}${match[3] ?? ''}` || '0', scale: (match[3] ?? '').length });
+  }
+  const scale = Math.max(0, ...parsed.map((p) => p.scale));
+  let total = BigInt(0);
+  for (const p of parsed) {
+    const value = BigInt(p.digits) * BigInt(10) ** BigInt(scale - p.scale);
+    total += p.negative ? -value : value;
+  }
+  const negative = total < BigInt(0);
+  const digits = (negative ? -total : total).toString().padStart(scale + 1, '0');
+  const result = scale > 0 ? `${digits.slice(0, -scale)}.${digits.slice(-scale)}` : digits;
+  return negative ? `-${result}` : result;
+}
+
+/**
+ * Convert a simple xs:duration ("P5D", "P2W", "P1M", "P1Y") to days. Months
+ * count as 30 days and years as 365. Returns 0 for other formats.
  */
 export function parseGracePeriod(duration: string): number {
-  const match = duration.match(/P(\d+)([YMWD])/);
+  const match = duration.match(/^P(\d+)([YMWD])$/);
   if (!match) return 0;
-  
-  const value = parseInt(match[1]);
-  const unit = match[2];
-  
-  switch (unit) {
-    case 'D': return value; // days
-    case 'W': return value * 7; // weeks to days
-    case 'M': return value * 30; // approximate months to days
-    case 'Y': return value * 365; // approximate years to days
+  const value = parseInt(match[1], 10);
+  switch (match[2]) {
+    case 'D': return value;
+    case 'W': return value * 7;
+    case 'M': return value * 30;
+    case 'Y': return value * 365;
     default: return 0;
   }
 }

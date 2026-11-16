@@ -9,9 +9,9 @@ import {
   parseFeeAmount,
   formatFeeAmount,
   calculateTotalFees,
+  sumFeeAmounts,
   parseGracePeriod,
-  FEE_NAMESPACE,
-  FEE_NAMESPACE_0_11
+  FEE_NAMESPACE
 } from '../src/types/Fee';
 
 describe('Fee Extension', () => {
@@ -75,6 +75,16 @@ describe('Fee Extension', () => {
   });
 
   describe('Total Fees Calculation', () => {
+    test('should add decimal amounts exactly', () => {
+      expect(sumFeeAmounts([{ fee: '0.1' }, { fee: '0.2' }])).toBe('0.3');
+      expect(sumFeeAmounts([{ fee: '10.10' }, { fee: '0.20' }, { fee: '-2.00' }])).toBe('8.30');
+      expect(sumFeeAmounts([{ fee: '5' }, { fee: '.5' }])).toBe('5.5');
+      expect(sumFeeAmounts([{ fee: '-1.25' }])).toBe('-1.25');
+      expect(sumFeeAmounts([])).toBe('0');
+      expect(sumFeeAmounts([{ fee: 'abc' }])).toBeUndefined();
+      expect(calculateTotalFees([{ fee: '0.1' }, { fee: '0.2' }])).toBe(0.3);
+    });
+
     test('should calculate total of multiple fees', () => {
       const fees: Fee[] = [
         { fee: '10.00', description: 'Registration' },
@@ -186,7 +196,6 @@ describe('Fee Extension', () => {
   describe('Namespaces', () => {
     test('should have correct namespace URIs', () => {
       expect(FEE_NAMESPACE).toBe('urn:ietf:params:xml:ns:epp:fee-1.0');
-      expect(FEE_NAMESPACE_0_11).toBe('urn:ietf:params:xml:ns:fee-0.11');
     });
   });
 
