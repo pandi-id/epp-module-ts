@@ -13,4 +13,3 @@ pnpm-debug.log*
 /.next/
 /out/
 /.cache/
-.github/workflows
