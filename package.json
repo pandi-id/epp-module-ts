@@ -21,11 +21,11 @@
     "author": "Ahmad Ropai",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/al0fayz/epp-ts.git"
+        "url": "git+https://github.com/teknispandi/epp-module-ts.git"
     },
-    "homepage": "https://github.com/al0fayz/epp-ts#readme",
+    "homepage": "https://github.com/teknispandi/epp-module-ts#readme",
     "bugs": {
-        "url": "https://github.com/al0fayz/epp-ts/issues"
+        "url": "https://github.com/teknispandi/epp-module-ts/issues"
     },
     "main": "dist/index.js",
     "types": "dist/index.d.ts",

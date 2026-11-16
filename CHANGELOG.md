@@ -57,7 +57,7 @@ responses (see [Fixed](#fixed)). Code written against it needs the changes liste
 - Tests: every command the client generates and every response fixture is validated against
   the official IANA XML schemas; response fixtures follow the RFC examples; integration tests
   run the client against an in-process TLS server, including mutual TLS.
-- CI on Node.js 18, 20, 22 and 24; `CHANGELOG.md` and `docs/COMPLIANCE.md`.
+- `CHANGELOG.md` and `docs/COMPLIANCE.md`.
 
 ### Changed
 
@@ -130,4 +130,4 @@ These changes affect code written against the pre-release API.
 - The XML parser rejects DOCTYPE declarations, ruling out entity-expansion attacks.
 - Frames above `maxFrameSize` close the connection instead of being buffered.
 
-[1.0.0]: https://github.com/al0fayz/epp-ts/releases/tag/v1.0.0
+[1.0.0]: https://github.com/teknispandi/epp-module-ts/releases/tag/v1.0.0

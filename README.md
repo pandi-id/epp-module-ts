@@ -1,6 +1,5 @@
 # epp-ts
 
-[![CI](https://github.com/al0fayz/epp-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/al0fayz/epp-ts/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/epp-ts.svg)](https://www.npmjs.com/package/epp-ts)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
